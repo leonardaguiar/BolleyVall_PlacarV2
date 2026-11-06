@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#12161B">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" type="image/png" href="./favicon.png">
+<title>Sortear time - BolleyVall Placar</title>
+<style>
+  :root{
+    --bg:#12161B;--court:#1B2129;--line:#2A323C;
+    --ink:#F3F1EA;--ink-dim:#8B94A0;--accent:#2F6FED;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+  [hidden]{display:none !important;}
+  body{
+    margin:0;background:var(--bg);color:var(--ink);
+    font-family:'Inter',system-ui,-apple-system,sans-serif;
+    padding-top:env(safe-area-inset-top,0px);
+    padding-bottom:env(safe-area-inset-bottom,0px);
+  }
+  .wrap{max-width:560px;margin:0 auto;padding:16px;}
+  header{display:flex;align-items:center;gap:12px;margin-bottom:16px;}
+  h1{font-size:20px;margin:0;}
+  .back{
+    text-decoration:none;color:var(--ink);font-size:14px;font-weight:700;
+    border:1px solid var(--line);background:var(--court);
+    border-radius:8px;padding:8px 12px;
+  }
+  .card{
+    background:var(--court);border:1px solid var(--line);
+    border-radius:14px;padding:14px;margin-bottom:14px;
+  }
+  .card h2{font-size:13px;margin:0 0 8px;color:var(--ink-dim);font-weight:700;letter-spacing:.03em;text-transform:uppercase;}
+  label.chk{display:flex;align-items:center;gap:10px;padding:8px 0;font-size:15px;cursor:pointer;}
+  input[type=checkbox]{width:22px;height:22px;accent-color:var(--accent);flex:0 0 auto;}
+  .row{display:flex;gap:18px;flex-wrap:wrap;}
+  .off{opacity:.4;}
+  textarea{
+    width:100%;min-height:130px;resize:vertical;
+    background:var(--bg);color:var(--ink);
+    border:1px solid var(--line);border-radius:10px;
+    padding:10px;font-size:15px;font-family:inherit;
+  }
+  .two{display:grid;gap:12px;}
+  .small{font-size:12px;color:var(--ink-dim);margin:6px 0 0;}
+  button.primary{
+    width:100%;padding:14px;border:none;border-radius:10px;
+    background:var(--accent);color:#fff;font-size:16px;font-weight:700;cursor:pointer;
+  }
+  button.ghost{
+    flex:1;padding:12px;border-radius:10px;border:1px solid var(--line);
+    background:transparent;color:var(--ink);font-size:14px;font-weight:700;cursor:pointer;
+  }
+  .actions{display:flex;gap:10px;margin-top:12px;}
+  .err{
+    background:rgba(229,72,77,.15);border:1px solid #E5484D;color:#FFB4B6;
+    border-radius:10px;padding:10px 12px;font-size:14px;margin-bottom:14px;
+  }
+  pre{
+    margin:0;white-space:pre-wrap;word-break:break-word;
+    font-family:inherit;font-size:14px;line-height:1.5;
+  }
+  .field{display:flex;align-items:center;gap:12px;padding:8px 0;font-size:15px;}
+  .field input{
+    width:90px;background:var(--bg);color:var(--ink);
+    border:1px solid var(--line);border-radius:8px;padding:8px;
+    font-size:15px;font-family:inherit;
+  }
+  .field select{
+    background:var(--bg);color:var(--ink);border:1px solid var(--line);
+    border-radius:8px;padding:8px;font-size:15px;font-family:inherit;
+  }
+
+  .linha{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:44px;}
+  .linha .nome{flex:1;min-width:0;word-break:break-word;}
+  .proximo{border:1px solid var(--accent);border-radius:10px;padding:0 10px;}
+  .jogou .nome{color:var(--ink-dim);text-decoration:line-through;}
+  .vs{text-align:center;color:var(--ink-dim);}
+  .etiqueta{font-size:11px;font-weight:700;letter-spacing:.04em;color:var(--ink-dim);}
+  .etiqueta.destaque{color:#8FB4FF;}
+  .grupo-botoes{display:flex;gap:6px;}
+  .texto-linha{font-size:14px;padding:2px 0;}
+  .btn-venceu{
+    background:var(--accent);color:#fff;border:0;border-radius:10px;
+    font-weight:700;font-size:14px;min-height:44px;padding:0 14px;cursor:pointer;
+  }
+  .btn-mini{
+    background:transparent;color:var(--ink);border:1px solid var(--line);border-radius:10px;
+    font-weight:700;font-size:13px;min-height:44px;padding:0 10px;cursor:pointer;
+  }
+  .btn-mini:disabled{opacity:.4;}
+
+  #result summary{cursor:pointer;font-weight:700;font-size:15px;padding:4px 0 10px;}
+  #result:not([open]) summary{padding-bottom:0;}
+
+  .actions{flex-wrap:wrap;}
+  .actions .ghost{min-width:130px;}
+  .aviso{
+    background:rgba(47,111,237,.15);border:1px solid var(--accent);
+    border-radius:10px;padding:10px 12px;font-size:14px;margin:14px 0;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <a class="back" href="/">← Voltar</a>
+    <h1>Sortear time</h1>
+  </header>
+
+  <section class="card">
+    <h2>Opções</h2>
+    <label class="chk"><input type="checkbox" id="mixed"> Priorizar misto</label>
+    <label class="chk"><input type="checkbox" id="trio"> Trio (desmarcado = dupla)</label>
+    <div class="row" id="modeRow">
+      <label class="chk"><input type="checkbox" id="fixed"> Dupla fixa</label>
+      <label class="chk"><input type="checkbox" id="dynamic" checked> Dupla dinâmica</label>
+    </div>
+    <div class="field">
+      <label for="rounds">Rodadas (opcional)</label>
+      <input type="number" id="rounds" min="1" max="30" inputmode="numeric" placeholder="1 a 30">
+    </div>
+    <div id="maxBox" hidden>
+      <div class="field">
+        <label for="maxM">Máx. de homens por time</label>
+        <input type="number" id="maxM" min="0" max="3" inputmode="numeric" placeholder="sem limite">
+      </div>
+      <div class="field">
+        <label for="maxMode">Regra</label>
+        <select id="maxMode">
+          <option value="ate">Até o máximo</option>
+          <option value="exato">Exato</option>
+        </select>
+      </div>
+      <p class="small" id="maxHint"></p>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Jogadores</h2>
+    <div id="boxAll">
+      <textarea id="namesAll" placeholder="Ana, Bruno, Carla&#10;ou um nome por linha"></textarea>
+    </div>
+    <div id="boxMixed" class="two" hidden>
+      <div>
+        <div class="small">Homens</div>
+        <textarea id="namesM" placeholder="Bruno, Carlos..."></textarea>
+      </div>
+      <div>
+        <div class="small">Mulheres</div>
+        <textarea id="namesF" placeholder="Ana, Carla..."></textarea>
+      </div>
+    </div>
+    <p class="small">Separe os nomes por vírgula ou por linha.</p>
+  </section>
+
+  <div class="err" id="err" hidden></div>
+  <button class="primary" id="go">Sortear</button>
+  <div class="aviso" id="avisoRecebido" hidden>
+    Sorteio recebido por link. O acompanhamento começa do zero neste aparelho.
+  </div>
+
+  <details class="card" id="result" hidden>
+    <summary>Lista do sorteio (copiar / PDF)</summary>
+    <pre id="resultText"></pre>
+    <div class="actions">
+      <button class="ghost" id="copyBtn">Copiar</button>
+      <button class="ghost" id="pdfBtn">Gerar PDF</button>
+      <button class="ghost" id="shareBtn">Compartilhar sorteio</button>
+      <p class="small">Ao compartilhar, o link é encurtado pelo is.gd (os nomes passam por ele). Sem internet, usa o link completo.</p>
+    </div>
+  </details>
+  <section id="tracker" hidden style="margin-top:14px;">
+    <div class="card" id="trackerQuadra"></div>
+    <div class="card" id="trackerFila"></div>
+    <div class="card" id="trackerHistorico"></div>
+    <div class="card" id="trackerRanking"></div>
+  </section>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="armazenamento-local.js" defer></script>
+<script src="fila.js" defer></script>
+<script src="compartilhar.js" defer></script>
+<script src="sortear.js" defer></script>
+</body>
+</html>

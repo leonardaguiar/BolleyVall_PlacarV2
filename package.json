@@ -1,0 +1,20 @@
+{
+  "name": "bolleyvall-placar",
+  "version": "1.0.0",
+  "private": true,
+  "engines": {
+    "node": ">=20.9.0"
+  },
+  "scripts": {
+    "dev": "next dev --hostname 0.0.0.0",
+    "build": "next build",
+    "start": "next start --hostname 0.0.0.0",
+    "db:migrate": "node scripts/migrate-db.mjs"
+  },
+  "dependencies": {
+    "next": "16.4.5",
+    "pg": "^8.23.1",
+    "react": "19.3.1",
+    "react-dom": "19.3.1"
+  }
+}

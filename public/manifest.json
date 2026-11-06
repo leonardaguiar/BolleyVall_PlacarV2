@@ -1,0 +1,9 @@
+{
+  "name": "BolleyVall Placar - Placar de Vôlei",
+  "short_name": "BolleyVall Placar",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "landscape",
+  "background_color": "#12161B",
+  "theme_color": "#12161B"
+}
