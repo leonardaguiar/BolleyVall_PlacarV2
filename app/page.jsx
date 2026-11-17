@@ -1,4 +1,5 @@
 import Script from 'next/script';
+import SyncManager from './sync-manager.jsx';
 
 export default function HomePage() {
   return (
@@ -36,8 +37,10 @@ export default function HomePage() {
           </div>
           <div className="divider" />
           <button className="reset-btn" id="resetBtn" type="button">Encerrar partida</button>
+          <button className="swap-sides-btn" id="swapSidesBtn" type="button" aria-label="Trocar os lados dos times" title="Trocar os lados dos times">⇄</button>
           <button className="install-btn hidden" id="installBtn" title="Instalar app" aria-label="Instalar app" type="button">⬇</button>
-          <span className="version-tag" id="versionTag">v1.0</span>
+          <span className="version-tag" id="versionTag">V2.0</span>
+          <SyncManager />
           <div className="panel b" id="panelB">
             <div className="stepper">
               <button className="up" data-key="b" data-delta="1" type="button">▲</button>

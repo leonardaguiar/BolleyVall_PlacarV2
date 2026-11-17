@@ -1,25 +1,71 @@
 (function(){
   const $ = id => document.getElementById(id);
-  const mixed = $('mixed'), trio = $('trio'), fixed = $('fixed'), dynamic = $('dynamic');
+  const mixed = $('mixed'), trio = $('trio'), fixed = $('fixed'), dynamic = $('dynamic'), dynamicModel2 = $('dynamicModel2');
+  const winnerStays = $('winnerStays');
   let lines = [];
   let currentPlan = null;   // dados estruturados do sorteio, usados pelo acompanhamento (fila.js)
+  let sharedViewerContext = null;
+  let sharedViewerPoll = null;
+  let sharedViewerRequestActive = false;
 
   // ---------- interface ----------
   function syncUI(){
     $('boxAll').hidden = mixed.checked;
     $('boxMixed').hidden = !mixed.checked;
-    fixed.disabled = dynamic.disabled = trio.checked;
+    fixed.disabled = dynamic.disabled = dynamicModel2.disabled = trio.checked;
     $('modeRow').classList.toggle('off', trio.checked);
+    $('trioModeBox').hidden = !trio.checked;
+    const modoTrio = document.querySelector('input[name="trioMode"]:checked').value;
+    const rotativo = trio.checked && modoTrio !== 'fixed';
+    const modelo2 = trio.checked ? modoTrio === 'rotativo-modelo2' : dynamicModel2.checked;
+    $('rounds').disabled = rotativo || modelo2;
+    $('rounds').parentElement.classList.toggle('off', rotativo || modelo2);
+    $('stayRow').hidden = !rotativo;
+    atualizarPessoasEControles();
+  }
+  function atualizarModeloDupla(){
+    if(dynamicModel2.checked){fixed.checked=false;dynamic.checked=false;}
+    else if(!fixed.checked&&!dynamic.checked) dynamic.checked=true;
+    syncUI();
   }
   // fixa/dinâmica se comportam como opção única
-  fixed.addEventListener('change', ()=>{ dynamic.checked = !fixed.checked; });
-  dynamic.addEventListener('change', ()=>{ fixed.checked = !dynamic.checked; });
+  fixed.addEventListener('change', ()=>{ dynamic.checked = !fixed.checked; dynamicModel2.checked=false; syncUI(); });
+  dynamic.addEventListener('change', ()=>{ fixed.checked = !dynamic.checked; dynamicModel2.checked=false; syncUI(); });
+  dynamicModel2.addEventListener('change', atualizarModeloDupla);
   mixed.addEventListener('change', syncUI);
   trio.addEventListener('change', syncUI);
+  document.querySelectorAll('input[name="trioMode"]').forEach(el=>el.addEventListener('change', syncUI));
+  ['namesAll','namesM','namesF'].forEach(id=>$(id).addEventListener('input', atualizarPessoasEControles));
   syncUI();
 
+  function lerQuantidadeJogadores(){
+    return mixed.checked
+      ? parse($('namesM').value).length + parse($('namesF').value).length
+      : parse($('namesAll').value).length;
+  }
+  function atualizarPessoasEControles(){
+    const modoTrio = document.querySelector('input[name="trioMode"]:checked').value;
+    const rotativo = trio.checked && modoTrio !== 'fixed';
+    const modelo2 = trio.checked ? modoTrio === 'rotativo-modelo2' : dynamicModel2.checked;
+    const n = lerQuantidadeJogadores();
+    const somenteSeis = rotativo && n === 6;
+    const estavaDesativado=winnerStays.disabled;
+    winnerStays.disabled = somenteSeis;
+    if(somenteSeis) winnerStays.checked=false;
+    else if(estavaDesativado) winnerStays.checked=true;
+    $('stayHint').hidden = !somenteSeis;
+    const info = $('comboCount');
+    if((rotativo || modelo2) && n >= (trio.checked?3:2)){
+      const k=trio.checked?3:2;
+      const total = k===3 ? n*(n-1)*(n-2)/6 : n*(n-1)/2;
+      const unidade=k===3?'trios':'duplas';
+      info.textContent = total.toLocaleString('pt-BR')+' '+unidade+' possíveis'+(modelo2 ? (total>2000?'; o Modelo 2 permite até 2.000 composições.':'; a fila do Modelo 2 é formada durante os jogos.') : k===3&&n%3 ? '; as próximas equipes serão sorteadas durante os jogos.' : '.');
+      info.hidden = false;
+    }else info.hidden = true;
+  }
+
   // ---------- utilitários ----------
-  const parse = t => t.split(/[,;\n]+/).map(s=>s.trim()).filter(Boolean);
+  function parse(t){ return t.split(/[,;\n]+/).map(s=>s.trim()).filter(Boolean); }
   function shuffle(a){
     a = a.slice();
     for(let i=a.length-1;i>0;i--){
@@ -40,6 +86,33 @@
     let h = 5381;
     for(const c of str) h = ((h<<5)+h+c.charCodeAt(0))>>>0;
     return 'BVP-'+h.toString(16).toUpperCase().padStart(8,'0');
+  }
+
+  function gerarCombinacoesModelo2(P,k,cap){
+    return combos(P.length,k).map(indices=>indices.map(i=>P[i])).filter(time=>{
+      if(k!==3||!cap) return true;
+      const homens=time.filter(p=>p.g==='M').length;
+      return cap.exact?homens===cap.N:homens<=cap.N;
+    });
+  }
+  const chaveTime = time => time.map(p=>p.n.toLocaleLowerCase('pt-BR')).sort().join('|');
+  const timeMisto = time => time.some(p=>p.g==='M')&&time.some(p=>p.g==='F');
+  function selecionarTimesSemSobreposicao(opcoes,quantas,k,misto){
+    const candidatos=shuffle(opcoes);
+    if(quantas===1){
+      candidatos.sort((a,b)=>Number(timeMisto(b))-Number(timeMisto(a)));
+      return candidatos.length?[candidatos[0]]:[];
+    }
+    let melhor=null,melhorScore=-Infinity;
+    for(let i=0;i<candidatos.length;i++){
+      const nomes=new Set(candidatos[i].map(p=>p.n.toLocaleLowerCase('pt-BR')));
+      for(let j=i+1;j<candidatos.length;j++){
+        if(candidatos[j].some(p=>nomes.has(p.n.toLocaleLowerCase('pt-BR')))) continue;
+        const score=(misto?(Number(timeMisto(candidatos[i]))+Number(timeMisto(candidatos[j])))*100000:0)+Math.random();
+        if(score>melhorScore){melhorScore=score;melhor=[candidatos[i],candidatos[j]];}
+      }
+    }
+    return melhor||[];
   }
 
   function getPlayers(){
@@ -146,6 +219,66 @@
       for(let i=0;i<n;i++){ if(c.includes(i)){ played[i]++; rest[i] = 0; } else rest[i]++; }
     }
     return seq.map(c=>c.map(i=>P[i]));
+  }
+
+  function quantidadeCombinacoes(n,k){
+    if(n<k) return 0;
+    let v=1;
+    for(let i=1;i<=k;i++) v=v*(n-k+i)/i;
+    return Math.round(v);
+  }
+
+  function trioDentroDaRegra(trioPessoas,cap){
+    if(!cap) return true;
+    const homens=trioPessoas.filter(p=>p.g==='M').length;
+    return cap.exact ? homens===cap.N : homens<=cap.N;
+  }
+
+  function genRotatingTrios(P,isMixed,cap,permanencia){
+    const total=quantidadeCombinacoes(P.length,3);
+    if(P.length%3===0){
+      if(total>2000) throw new Error('Este sorteio teria '+total.toLocaleString('pt-BR')+' combinações de trio. O limite para gerar a fila completa é 2.000.');
+      let equipes=combos(P.length,3).map(indices=>indices.map(i=>P[i])).filter(t=>trioDentroDaRegra(t,cap));
+      if(equipes.length<2) throw new Error('As regras de misto escolhidas não permitem formar dois trios diferentes. Ajuste o limite de homens por time.');
+      if(isMixed){
+        const mistas=shuffle(equipes.filter(t=>new Set(t.map(p=>p.g)).size>1));
+        const naoMistas=shuffle(equipes.filter(t=>new Set(t.map(p=>p.g)).size===1));
+        equipes=[...mistas,...naoMistas];
+      }else equipes=shuffle(equipes);
+      let primeiro=-1,segundo=-1;
+      for(let i=0;i<equipes.length&&primeiro<0;i++){
+        const usados=new Set(equipes[i].map(p=>p.n));
+        const candidatos=[];
+        for(let j=i+1;j<equipes.length;j++) if(equipes[j].every(p=>!usados.has(p.n))) candidatos.push(j);
+        if(candidatos.length){ primeiro=i; segundo=candidatos[Math.floor(Math.random()*candidatos.length)]; }
+      }
+      if(primeiro<0) throw new Error('Não foi possível montar dois trios sem jogadores repetidos. Ajuste a regra de homens por time.');
+      const ordem=[equipes[primeiro],equipes[segundo],...equipes.filter((_,i)=>i!==primeiro&&i!==segundo)];
+      return {
+        modo:'completo',
+        times:ordem.map(t=>t.map(p=>p.n)),
+        total:equipes.length,
+        metadata:{ jogadores:P.map(p=>({n:p.n,g:p.g})), misto:isMixed, cap:cap, permanencia:permanencia, combinacoesCompletas:true }
+      };
+    }
+
+    // Com reservas, só o primeiro jogo é montado agora. As próximas equipes
+    // serão escolhidas na hora, usando quem está há mais tempo fora da quadra.
+    const inicial=formFixed(P,3,isMixed,cap);
+    if(inicial.teams.length<2) throw new Error('Informe pelo menos 6 jogadores para formar dois trios completos.');
+    return {
+      modo:'reservas',
+      times:inicial.teams.slice(0,2).map(t=>t.map(p=>p.n)),
+      total:total,
+      metadata:{ jogadores:P.map(p=>({n:p.n,g:p.g})), misto:isMixed, cap:cap, permanencia:permanencia, combinacoesCompletas:false }
+    };
+  }
+
+  function listarFilaRotativa(times,comInicio){
+    const L=[];
+    const inicio=comInicio ? 2 : 0;
+    for(let i=inicio;i<times.length;i++) L.push(['q','Trio '+(i+1)+': '+times[i].join(' + ')]);
+    return L;
   }
 
     // dupla dinâmica: um jogo por rodada, sem fila (monta as duas duplas do confronto)
@@ -279,10 +412,13 @@
   function build(){
     const P = getPlayers();
     const isTrio = trio.checked, k = isTrio ? 3 : 2;
-    const isFixed = isTrio || fixed.checked, isMixed = mixed.checked;
+    const modoTrio = document.querySelector('input[name="trioMode"]:checked').value;
+    const isRotativo = isTrio && modoTrio !== 'fixed';
+    const isModelo2 = isTrio ? modoTrio === 'rotativo-modelo2' : dynamicModel2.checked;
+    const isFixed = isTrio ? !isRotativo : fixed.checked, isMixed = mixed.checked;
     const unit = isTrio ? 'Trio' : 'Dupla';
     const nomes = time => time.map(p => p.n);
-    const plano = { unit: unit, tamanho: k, fases: [] };
+    const plano = { unit: unit, tamanho: k, fases: [], participantes: P.map(p=>({n:p.n,g:p.g})) };
 
     // trio: os reservas entram no fim da fila como times incompletos
     const timesDaFila = sorteio => {
@@ -293,10 +429,10 @@
       return times;
     };
 
-    const rv = $('rounds').value.trim(), R = rv ? parseInt(rv,10) : 0;
+    const rv = $('rounds').value.trim(), R = isRotativo || isModelo2 ? 0 : (rv ? parseInt(rv,10) : 0);
     const mraw = $('maxM').value.trim();
     let cap = null, capNote = '';
-    if(isMixed && isFixed && mraw !== ''){
+    if(isMixed && (isFixed || isRotativo) && mraw !== ''){
       const N0 = Math.min(k, Math.max(0, parseInt(mraw,10) || 0));
       const ex0 = $('maxMode').value === 'exato';
       const m = P.filter(p=>p.g==='M').length, f = P.length - m;
@@ -312,10 +448,20 @@
     if(P.length < 2*k){
       throw new Error('Informe pelo menos '+(2*k)+' jogadores para sortear '+(isTrio ? 'trios' : 'duplas')+'.');
     }
+    if(isModelo2){
+      const total=k===3?P.length*(P.length-1)*(P.length-2)/6:P.length*(P.length-1)/2;
+      if(total>2000) throw new Error('O Modelo 2 permite até 2.000 composições possíveis. Reduza a quantidade de jogadores para continuar.');
+    }
+    plano.configuracao={
+      tipo:isModelo2?(isTrio?'trio-rotativo-modelo2':'dupla-dinamica-modelo2'):isRotativo?'trio-rotativo':isTrio?'trio-fixo':fixed.checked?'dupla-fixa':R?'dupla-rodadas':'dupla-dinamica',
+      tipoTrioOriginal:isRotativo?(isModelo2?'trio-rotativo-modelo2':'trio-rotativo'):isTrio?'trio-fixo':null,
+      misto:isMixed, cap:cap, permanencia:isRotativo?(P.length===6?false:winnerStays.checked):(isModelo2&&!isTrio),
+      rodadas:R, tamanho:k
+    };
 
-    const nm = t => t.map(p=>p.n).join(' + ');
+    const nm = t => t.map(p=>typeof p==='string' ? p : p.n).join(' + ');
     const VS = '\u00A0'.repeat(10)+'vs.';
-    const modo = isTrio ? 'Trio (fixo)' : fixed.checked ? 'Dupla fixa' : 'Dupla dinâmica';
+    const modo = isModelo2 ? (isTrio?'Trio rotativo Modelo 2':'Dupla dinâmica Modelo 2') : isRotativo ? 'Trio rotativo' : isTrio ? 'Trio (fixo)' : fixed.checked ? 'Dupla fixa' : 'Dupla dinâmica';
     const L = [
       ['title','Sorteio de times'],
       ['m','Filtros: '+modo+' | Priorizar misto: '+(isMixed ? 'sim' : 'não')+' | '+P.length+' jogadores'+(R ? ' | Rodadas: '+R : '') +(cap ? ' | Máx. de homens por time: '+cap.N+(cap.exact ? ' (exato)' : ' (até o máximo)') : '')]
@@ -339,7 +485,57 @@
       }
     };
 
-    if(isFixed){
+    if(isModelo2){
+      const todas=gerarCombinacoesModelo2(P,k,cap);
+      if(todas.length<2) throw new Error('Com os filtros atuais não é possível formar duas '+(k===3?'equipes de trio':'duplas')+'. Ajuste o limite de homens por time.');
+      const iniciais=selecionarTimesSemSobreposicao(todas,2,k,isMixed);
+      if(iniciais.length<2) throw new Error('Não foi possível formar duas equipes sem jogadores repetidos. Ajuste os filtros ou a quantidade de jogadores.');
+      const emQuadra=new Set(iniciais.flatMap(t=>t.map(p=>p.n.toLocaleLowerCase('pt-BR'))));
+      const fora=todas.filter(t=>t.every(p=>!emQuadra.has(p.n.toLocaleLowerCase('pt-BR'))));
+      const preparadas=selecionarTimesSemSobreposicao(fora,Math.min(2,Math.floor(P.filter(p=>!emQuadra.has(p.n.toLocaleLowerCase('pt-BR'))).length/k)),k,isMixed);
+      const nomesIniciais=iniciais.map(nomes), nomesPreparados=preparadas.map(nomes);
+      const restantes=todas.filter(t=>!new Set(iniciais.map(chaveTime)).has(chaveTime(t)));
+      const listaCompartilhada=[...iniciais,...shuffle(restantes)].map(nomes);
+      const total=k===3?P.length*(P.length-1)*(P.length-2)/6:P.length*(P.length-1)/2;
+      const permanencia=isTrio?(P.length===6?false:winnerStays.checked):true;
+      const fase={
+        titulo:'Sorteio',modo:'fila',times:[...nomesIniciais,...nomesPreparados],dinamico:true,
+        preparados:nomesPreparados.map((_,i)=>i+2),
+        modelo2:{tamanho:k,jogadores:P.map(p=>({...p})),misto:isMixed,cap:cap,permanencia:permanencia,totalCombinacoes:total,combinacoesCompartilhadas:listaCompartilhada,usadas:[...iniciais,...preparadas].map(chaveTime)}
+      };
+      plano.fases.push(fase);
+      L.push(['h','JOGO 1']);
+      addGame(iniciais[0],iniciais[1],unit);
+      L.push(['model2-header','COMBINAÇÕES POSSÍVEIS (ordem de referência; a fila do app é montada durante os jogos)']);
+      listaCompartilhada.forEach((time,i)=>L.push(['q',unit+' '+(i+1)+': '+nm(time)]));
+      L.push(['m',total.toLocaleString('pt-BR')+' combinações possíveis. A fila do acompanhamento prioriza quem está há mais tempo sem jogar e tenta evitar repetir formações ainda não usadas.']);
+      if(nomesPreparados.length===1) L.push(['m','Uma equipe futura foi preparada; o adversário será definido quando a partida atual terminar.']);
+      else if(nomesPreparados.length===0) L.push(['m','As próximas equipes serão definidas quando a partida atual terminar.']);
+      if(isTrio) L.push(['m',permanencia?'O trio vencedor permanece por mais uma partida e depois sai da quadra.':'O trio vencedor sai da quadra após a partida.']);
+      else L.push(['m','A dupla vencedora permanece por mais uma partida e depois sai da quadra.']);
+    }else if(isRotativo){
+      const permanencia = P.length===6 ? false : winnerStays.checked;
+      const sorteio=genRotatingTrios(P,isMixed,cap,permanencia);
+      const fase={
+        titulo:'Sorteio', modo:'fila', times:sorteio.times, dinamico:true,
+        rotativo:{modo:sorteio.modo,jogadores:sorteio.metadata.jogadores,misto:sorteio.metadata.misto,cap:sorteio.metadata.cap,permanencia:sorteio.metadata.permanencia,combinacoesCompletas:sorteio.metadata.combinacoesCompletas,totalCombinacoes:sorteio.total}
+      };
+      plano.fases.push(fase);
+      L.push(['h','JOGO 1']);
+      addGame(sorteio.times[0],sorteio.times[1],unit);
+      if(sorteio.modo==='completo'){
+        L.push(['h','FILA (trios possíveis)']);
+        L.push(...listarFilaRotativa(sorteio.times,true));
+        L.push(['m',sorteio.total.toLocaleString('pt-BR')+' combinações de trio. Cada trio aparece pelo menos uma vez; repetições podem ocorrer pela fila e pela permanência do vencedor.']);
+      }else{
+        const emQuadra=new Set([...sorteio.times[0],...sorteio.times[1]]);
+        const reservas=P.filter(p=>!emQuadra.has(p.n)).map(p=>p.n);
+        if(reservas.length) L.push(['h','RESERVAS (entram conforme o tempo de espera)'],['t',reservas.join(' + ')]);
+        L.push(['m',sorteio.total.toLocaleString('pt-BR')+' trios possíveis em teoria. As próximas equipes serão sorteadas durante os jogos.']);
+      }
+      if(P.length===6) L.push(['m','Com 6 jogadores, o vencedor sai após cada jogo para permitir a rotação.']);
+      else L.push(['m',permanencia ? 'O trio vencedor permanece por mais uma partida e depois sai da quadra.' : 'O trio vencedor sai da quadra após a partida.']);
+    }else if(isFixed){
       if(R){
         const hist = { pairs: new Set(), sat: {} };
         for(let r=1;r<=R;r++){
@@ -363,7 +559,7 @@
       });
     }else{
       const seq = genPairs(P,isMixed);
-      plano.fases.push({ titulo: 'Sorteio', modo: 'fila', times: seq.map(nomes) });
+      plano.fases.push({ titulo: 'Sorteio', modo: 'fila', times: seq.map(nomes), dinamico:true });
       L.push(['h','JOGO 1']);
       addGame(seq[0],seq[1],'Dupla');
       if(seq.length > 2){
@@ -381,25 +577,145 @@
 
   const toText = L => L.map(([t,s])=>(t==='h' ? '\n' : '')+s).join('\n').replace(/\n{3,}/g,'\n\n');
 
+  let resultObserver = null, quantidadeFilaExibida = 0;
+  function renderizarResultadoProgressivo(){
+    const filas=lines.filter(([tipo])=>tipo==='q').length;
+    const maxFila=quantidadeFilaExibida;
+    let exibidas=0;
+    const parte=lines.filter(([tipo])=>{
+      if(tipo!=='q') return true;
+      if(exibidas>=maxFila) return false;
+      exibidas++;
+      return true;
+    });
+    $('resultText').textContent=toText(parte);
+    const restante=filas-exibidas;
+    $('resultMore').hidden=restante<=0;
+    $('resultMore').textContent=restante>0 ? 'Role até o fim para carregar mais composições ('+restante.toLocaleString('pt-BR')+' restantes).' : '';
+  }
+
     // mostra a lista pura do sorteio (a mesma usada em Copiar e PDF)
    // mostra a lista pura do sorteio; "aberto" define se o bloco aparece expandido
   function mostrarResultado(aberto){
     $('err').hidden = true;
-    $('resultText').textContent = toText(lines);
+    if(resultObserver){ resultObserver.disconnect(); resultObserver=null; }
+    const totalFila=lines.filter(([tipo])=>tipo==='q').length;
+    quantidadeFilaExibida=Math.min(totalFila,20);
+    renderizarResultadoProgressivo();
     $('result').hidden = false;
     $('result').open = aberto;
+    if(totalFila>20 && 'IntersectionObserver' in window){
+      resultObserver=new IntersectionObserver(entries=>{
+        if(entries.some(e=>e.isIntersecting) && quantidadeFilaExibida<totalFila){
+          quantidadeFilaExibida=Math.min(totalFila,quantidadeFilaExibida+20);
+          renderizarResultadoProgressivo();
+        }
+      },{rootMargin:'120px'});
+      resultObserver.observe($('resultMore'));
+    }
   }
 
-  $('go').addEventListener('click', ()=>{
+  window.addEventListener('fila-sorteio-atualizado',evento=>{
+    if(!Array.isArray(evento.detail?.linhas)) return;
+    lines=evento.detail.linhas;
+    if(!$('result').hidden) mostrarResultado(false);
+    Compartilhar.prepararLink();
+  });
+
+  const SYNC_STORAGE_KEY = 'bolleyvall-sync-manager-v1';
+  function getSyncSession(){
+    try { return JSON.parse(localStorage.getItem(SYNC_STORAGE_KEY) || 'null'); }
+    catch { return null; }
+  }
+  function deviceIdFor(sessionId){
+    const key = 'bolleyvall-device:' + sessionId;
+    let deviceId = sessionStorage.getItem(key);
+    if (!deviceId) {
+      deviceId = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+        ? crypto.randomUUID()
+        : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, character => {
+          const value = Math.floor(Math.random() * 16);
+          return (character === 'x' ? value : (value & 0x3) | 0x8).toString(16);
+        });
+      sessionStorage.setItem(key, deviceId);
+    }
+    return deviceId;
+  }
+  async function finishSharedCompetition(session){
+    const headers = {
+      Authorization: 'Bearer ' + session.token,
+      'X-Device-Id': deviceIdFor(session.id)
+    };
+    const sendFinish = async ()=>{
+      const response = await fetch('/api/sessions/' + session.id + '/finish', {
+        method: 'POST', headers
+      });
+      const result = await response.json();
+      return { response, result };
+    };
+    let attempt = await sendFinish();
+    if (!attempt.response.ok && attempt.result.error === 'Este aparelho precisa manter o controle ativo para alterar a sala.') {
+      const recovery = await fetch('/api/sessions/' + session.id + '/control', {
+        method: 'POST',
+        headers: { ...headers, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'recover' })
+      });
+      const recovered = await recovery.json();
+      if (!recovery.ok) throw new Error(recovered.error || 'Não foi possível recuperar o controle como organizador.');
+      attempt = await sendFinish();
+    }
+    if (!attempt.response.ok) throw new Error(attempt.result.error || 'Não foi possível encerrar a competição.');
+    return attempt.result;
+  }
+  function updateFinishButton(){
+    const session = getSyncSession();
+    const button = $('finishCompetition');
+    if (!button) return;
+    button.hidden = !(session?.id && session?.token && (session.status === 'active' || !session.status));
+  }
+  async function finishRoomIfReplaced(nextPlanId){
+    const session = getSyncSession();
+    if (!session?.id || !session?.token || ['finished', 'archived'].includes(session.status) || session.sourcePlanId === nextPlanId) return;
+    try {
+      const result = await finishSharedCompetition(session);
+      localStorage.setItem(SYNC_STORAGE_KEY, JSON.stringify({ ...session, status: result.status }));
+      return null;
+    } catch (error) {
+      return 'Não foi possível encerrar a sala anterior: ' + error.message;
+    }
+  }
+
+  $('finishCompetition').addEventListener('click', async ()=>{
+    const session = getSyncSession();
+    if (!session?.id || !session?.token || (session.status && session.status !== 'active')) return;
+    if (!confirm('Encerrar esta competição? Se o controle tiver expirado, será recuperado pelo organizador. A sala continuará acessível pelos links atuais somente para visualização.')) return;
+    const button = $('finishCompetition');
+    button.disabled = true;
+    try {
+      const result = await finishSharedCompetition(session);
+      localStorage.setItem(SYNC_STORAGE_KEY, JSON.stringify({ ...session, status: result.status }));
+      mostrarAviso('Competição encerrada. Os links atuais continuam disponíveis somente para visualização.');
+      updateFinishButton();
+    } catch (error) {
+      alert(error.message);
+    } finally { button.disabled = false; }
+  });
+
+  $('go').addEventListener('click', async ()=>{
     try{
-      if(Fila.temProgresso() && !confirm('Sortear de novo apaga o acompanhamento atual (fila e resultados). Continuar?')){
+      if(Fila.temProgresso() && !confirm('Sortear de novo encerra a sala compartilhada vinculada e apaga o acompanhamento atual (fila e resultados). Continuar?')){
         return;
       }
       lines = build();
       Fila.iniciar(currentPlan, lines, lerFormulario());
+      sairDoModoVisualizadorCompartilhado();
       Compartilhar.prepararLink();
       $('avisoRecebido').hidden = true;
       mostrarResultado();
+      updateFinishButton();
+      const finishWarning = await finishRoomIfReplaced(currentPlan.id);
+      updateFinishButton();
+      if (finishWarning) mostrarAviso('O novo sorteio começou, mas ' + finishWarning);
       $('tracker').scrollIntoView({behavior:'smooth'});
     }catch(e){
       $('err').textContent = e.message;
@@ -473,7 +789,7 @@
   ['namesM','namesF'].forEach(id=> $(id).addEventListener('input', updateMaxUI));
   $('maxM').addEventListener('input', ()=>{ maxTouched = true; updateMaxUI(); });
   $('maxMode').addEventListener('change', updateMaxUI);
-  [mixed,trio,fixed,dynamic].forEach(el=> el.addEventListener('change', updateMaxUI));
+  [mixed,trio,fixed,dynamic,dynamicModel2].forEach(el=> el.addEventListener('change', updateMaxUI));
   updateMaxUI();
 
     // guarda o que está preenchido na tela (vai junto do sorteio, no link e no salvamento)
@@ -481,7 +797,10 @@
     return {
       misto: mixed.checked,
       trio: trio.checked,
+      modoTrio: document.querySelector('input[name="trioMode"]:checked').value,
+      permanenciaVencedor: winnerStays.checked,
       fixa: fixed.checked,
+      duplaModelo2: dynamicModel2.checked,
       rodadas: $('rounds').value,
       maxHomens: $('maxM').value,
       regraMax: $('maxMode').value,
@@ -496,8 +815,12 @@
     if(!formulario) return;
     mixed.checked = formulario.misto;
     trio.checked = formulario.trio;
+    const modoTrio = ['rotativo','rotativo-modelo2'].includes(formulario.modoTrio) ? formulario.modoTrio : 'fixed';
+    document.querySelector('input[name="trioMode"][value="'+modoTrio+'"]').checked = true;
+    winnerStays.checked = formulario.permanenciaVencedor !== false;
     fixed.checked = formulario.fixa;
-    dynamic.checked = !formulario.fixa;
+    dynamicModel2.checked = formulario.duplaModelo2 === true;
+    dynamic.checked = !formulario.fixa && !dynamicModel2.checked;
     $('rounds').value = formulario.rodadas;
     $('namesAll').value = formulario.todos;
     $('namesM').value = formulario.homens;
@@ -526,7 +849,7 @@
   }
 
   // aplica um andamento recebido; se este aparelho já tem jogos, pergunta antes de substituir
-  function aplicarAndamentoRecebido(recebido){
+  async function aplicarAndamentoRecebido(recebido){
     const jogosNoLink = recebido.andamento.estado.historico.length;
     const jogosAqui = Fila.quantidadeDeJogos();
     const hora = horaDoAndamento(recebido.andamento);
@@ -540,26 +863,117 @@
 
     lines = recebido.linhas;
     Fila.iniciarComAndamento(recebido.plano, recebido.linhas, recebido.formulario, recebido.andamento);
+    const finishWarning = await finishRoomIfReplaced(recebido.plano.id);
     aplicarFormulario(recebido.formulario);
     mostrarResultado(false);
-    mostrarAviso('Andamento recebido (' + jogosNoLink + ' jogo(s), gerado às ' + hora + '). Você pode continuar daqui.');
+    mostrarAviso('Andamento recebido (' + jogosNoLink + ' jogo(s), gerado às ' + hora + '). Você pode continuar daqui.' + (finishWarning ? ' ' + finishWarning : ''));
+    updateFinishButton();
     Compartilhar.prepararLink();
   }
 
   // aplica um sorteio recebido (sem andamento); se houver jogos registrados, pergunta antes
-  function aplicarSorteioRecebido(recebido){
+  async function aplicarSorteioRecebido(recebido){
     const podeSubstituir = !Fila.temProgresso()
       || confirm('Você recebeu um sorteio novo. Isso substitui o acompanhamento atual deste aparelho. Continuar?');
     if(!podeSubstituir) return;
 
     lines = recebido.linhas;
     Fila.iniciar(recebido.plano, recebido.linhas, recebido.formulario);
+    const finishWarning = await finishRoomIfReplaced(recebido.plano.id);
     aplicarFormulario(recebido.formulario);
     mostrarResultado(false);
-    mostrarAviso('Sorteio recebido por link. O acompanhamento começa do zero neste aparelho.');
+    mostrarAviso('Sorteio recebido por link. O acompanhamento começa do zero neste aparelho.' + (finishWarning ? ' ' + finishWarning : ''));
+    updateFinishButton();
     Compartilhar.prepararLink();
   }
 
+  function preencherResumoCompartilhado(listId, emptyId, rows, emptyMessage) {
+    const list = $(listId);
+    const empty = $(emptyId);
+    list.replaceChildren();
+    if (!rows.length) { empty.textContent = emptyMessage; empty.hidden = false; return; }
+    empty.hidden = true;
+    const fragment = document.createDocumentFragment();
+    rows.forEach(text => { const item = document.createElement('li'); item.textContent = text; fragment.appendChild(item); });
+    list.appendChild(fragment);
+  }
+
+  function atualizarResumoCompartilhado(session) {
+    const phaseIndex = session.state?.faseAtual ?? 0;
+    const phase = session.plan?.fases?.[phaseIndex];
+    const progress = session.state?.fases?.[phaseIndex];
+    const queue = (progress?.fila || []).slice(0, 2).map(item => {
+      const team = phase?.times?.[item.id]?.join(' + ') || `Time ${item.id + 1}`;
+      return team + (item.jogou ? ' · já jogou' : '');
+    });
+    const historyRows = [...(session.state?.historico || [])].slice(-5).reverse().map(match =>
+      `${match.vencedor || 'Vencedor'} VENCEU ${match.perdedor || 'adversário'}`
+    );
+    const counts = new Map();
+    for (const match of session.state?.historico || []) {
+      for (const name of match.vencedores || []) {
+        const row = counts.get(name) || { wins: 0, games: 0 };
+        row.wins += 1; row.games += 1; counts.set(name, row);
+      }
+      for (const name of match.perdedores || []) {
+        const row = counts.get(name) || { wins: 0, games: 0 };
+        row.games += 1; counts.set(name, row);
+      }
+    }
+    const ranking = [...counts.entries()]
+      .map(([name, row]) => ({ name, ...row }))
+      .sort((a, b) => b.wins - a.wins || a.games - b.games || a.name.localeCompare(b.name, 'pt-BR'))
+      .map(player => `${player.name} · ${player.wins} vitória(s) em ${player.games} jogo(s)`);
+    preencherResumoCompartilhado('sharedQueue', 'sharedQueueEmpty', queue, 'Sem times aguardando.');
+    preencherResumoCompartilhado('sharedHistory', 'sharedHistoryEmpty', historyRows, 'Nenhuma partida encerrada.');
+    preencherResumoCompartilhado('sharedRanking', 'sharedRankingEmpty', ranking, 'O ranking aparece após a primeira partida.');
+    const time = new Intl.DateTimeFormat('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }).format(Date.now());
+    $('sharedStatus').textContent = `Conectado · Atualizado ${time} · Revisão ${session.revision}`;
+  }
+
+  async function consultarResumoCompartilhado() {
+    if (!sharedViewerContext || sharedViewerRequestActive) return;
+    sharedViewerRequestActive = true;
+    try {
+      const response = await fetch(`/api/sessions/${sharedViewerContext.id}`, {
+        headers: { Authorization: `Bearer ${sharedViewerContext.token}`, 'X-Device-Id': deviceIdFor(sharedViewerContext.id) }, cache: 'no-store'
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Não foi possível carregar a sala.');
+      atualizarResumoCompartilhado(data);
+    } catch (error) {
+      $('sharedStatus').textContent = error.message === 'Acesso inválido ou expirado.'
+        ? 'Este link de visualização foi revogado.' : 'Reconectando à sala…';
+    } finally { sharedViewerRequestActive = false; }
+  }
+
+  function iniciarModoVisualizadorCompartilhado() {
+    const id = new URLSearchParams(location.search).get('visualizador');
+    const tokenPrefix = '#visualizador=';
+    const token = location.hash.startsWith(tokenPrefix) ? decodeURIComponent(location.hash.slice(tokenPrefix.length)) : '';
+    if (!/^[0-9a-f-]{36}$/i.test(id || '') || !/^[A-Za-z0-9_-]{40,50}$/.test(token)) return;
+    sharedViewerContext = { id, token };
+    $('sharedViewerNote').hidden = false;
+    $('sharedProgress').hidden = false;
+    $('sharedProgress').open = true;
+    $('backLink').href = `/s/${id}?semModal=1#${encodeURIComponent(token)}`;
+    $('tracker').hidden = true;
+    $('result').hidden = true;
+    $('avisoRecebido').hidden = true;
+    consultarResumoCompartilhado();
+    sharedViewerPoll = setInterval(consultarResumoCompartilhado, 2000);
+  }
+
+  function sairDoModoVisualizadorCompartilhado() {
+    if (!sharedViewerContext) return;
+    sharedViewerContext = null;
+    if (sharedViewerPoll) clearInterval(sharedViewerPoll);
+    sharedViewerPoll = null;
+    $('sharedProgress').hidden = true;
+    $('sharedViewerNote').hidden = true;
+    $('backLink').href = '/';
+    history.replaceState(null, '', location.pathname);
+  }
   // ao abrir a página: sorteio/andamento recebido por link, ou último sorteio salvo no aparelho
   async function abrirSorteioInicial(){
     let recebido = null;
@@ -582,12 +996,12 @@
     if(!recebido) return;
 
     if(recebido.andamento){
-      aplicarAndamentoRecebido(recebido);
+      await aplicarAndamentoRecebido(recebido);
     }else{
-      aplicarSorteioRecebido(recebido);
+      await aplicarSorteioRecebido(recebido);
     }
     Compartilhar.limparLinkDaBarra();
   }
-  ArmazenamentoLocal.ready.then(abrirSorteioInicial);
+  ArmazenamentoLocal.ready.then(async ()=>{ iniciarModoVisualizadorCompartilhado(); await abrirSorteioInicial(); if (sharedViewerContext) { $("tracker").hidden = true; $("result").hidden = true; $("avisoRecebido").hidden = true; } updateFinishButton(); });
   
 })();

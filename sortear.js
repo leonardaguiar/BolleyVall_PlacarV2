@@ -1,6 +1,7 @@
 (function(){
   const $ = id => document.getElementById(id);
   const mixed = $('mixed'), trio = $('trio'), fixed = $('fixed'), dynamic = $('dynamic');
+  const winnerStays = $('winnerStays');
   let lines = [];
   let currentPlan = null;   // dados estruturados do sorteio, usados pelo acompanhamento (fila.js)
 
@@ -10,16 +11,46 @@
     $('boxMixed').hidden = !mixed.checked;
     fixed.disabled = dynamic.disabled = trio.checked;
     $('modeRow').classList.toggle('off', trio.checked);
+    $('trioModeBox').hidden = !trio.checked;
+    const rotativo = trio.checked && document.querySelector('input[name="trioMode"]:checked').value === 'rotativo';
+    $('rounds').disabled = rotativo;
+    $('rounds').parentElement.classList.toggle('off', rotativo);
+    $('stayRow').hidden = !rotativo;
+    atualizarPessoasEControles();
   }
   // fixa/dinâmica se comportam como opção única
   fixed.addEventListener('change', ()=>{ dynamic.checked = !fixed.checked; });
   dynamic.addEventListener('change', ()=>{ fixed.checked = !dynamic.checked; });
   mixed.addEventListener('change', syncUI);
   trio.addEventListener('change', syncUI);
+  document.querySelectorAll('input[name="trioMode"]').forEach(el=>el.addEventListener('change', syncUI));
+  ['namesAll','namesM','namesF'].forEach(id=>$(id).addEventListener('input', atualizarPessoasEControles));
   syncUI();
 
+  function lerQuantidadeJogadores(){
+    return mixed.checked
+      ? parse($('namesM').value).length + parse($('namesF').value).length
+      : parse($('namesAll').value).length;
+  }
+  function atualizarPessoasEControles(){
+    const rotativo = trio.checked && document.querySelector('input[name="trioMode"]:checked').value === 'rotativo';
+    const n = lerQuantidadeJogadores();
+    const somenteSeis = rotativo && n === 6;
+    const estavaDesativado=winnerStays.disabled;
+    winnerStays.disabled = somenteSeis;
+    if(somenteSeis) winnerStays.checked=false;
+    else if(estavaDesativado) winnerStays.checked=true;
+    $('stayHint').hidden = !somenteSeis;
+    const info = $('comboCount');
+    if(rotativo && n >= 3){
+      const total = n*(n-1)*(n-2)/6;
+      info.textContent = total.toLocaleString('pt-BR')+' trios possíveis'+(n%3 ? '; as próximas equipes serão sorteadas durante os jogos.' : (total>2000 ? '; o limite da fila completa é 2.000.' : '.'));
+      info.hidden = false;
+    }else info.hidden = true;
+  }
+
   // ---------- utilitários ----------
-  const parse = t => t.split(/[,;\n]+/).map(s=>s.trim()).filter(Boolean);
+  function parse(t){ return t.split(/[,;\n]+/).map(s=>s.trim()).filter(Boolean); }
   function shuffle(a){
     a = a.slice();
     for(let i=a.length-1;i>0;i--){
@@ -146,6 +177,66 @@
       for(let i=0;i<n;i++){ if(c.includes(i)){ played[i]++; rest[i] = 0; } else rest[i]++; }
     }
     return seq.map(c=>c.map(i=>P[i]));
+  }
+
+  function quantidadeCombinacoes(n,k){
+    if(n<k) return 0;
+    let v=1;
+    for(let i=1;i<=k;i++) v=v*(n-k+i)/i;
+    return Math.round(v);
+  }
+
+  function trioDentroDaRegra(trioPessoas,cap){
+    if(!cap) return true;
+    const homens=trioPessoas.filter(p=>p.g==='M').length;
+    return cap.exact ? homens===cap.N : homens<=cap.N;
+  }
+
+  function genRotatingTrios(P,isMixed,cap,permanencia){
+    const total=quantidadeCombinacoes(P.length,3);
+    if(P.length%3===0){
+      if(total>2000) throw new Error('Este sorteio teria '+total.toLocaleString('pt-BR')+' combinações de trio. O limite para gerar a fila completa é 2.000.');
+      let equipes=combos(P.length,3).map(indices=>indices.map(i=>P[i])).filter(t=>trioDentroDaRegra(t,cap));
+      if(equipes.length<2) throw new Error('As regras de misto escolhidas não permitem formar dois trios diferentes. Ajuste o limite de homens por time.');
+      if(isMixed) equipes.sort((a,b)=>{
+        const mistoA=new Set(a.map(p=>p.g)).size>1, mistoB=new Set(b.map(p=>p.g)).size>1;
+        return Number(mistoB)-Number(mistoA);
+      });
+      equipes=shuffle(equipes);
+      let primeiro=-1,segundo=-1;
+      for(let i=0;i<equipes.length&&primeiro<0;i++){
+        const usados=new Set(equipes[i].map(p=>p.n));
+        const candidatos=[];
+        for(let j=i+1;j<equipes.length;j++) if(equipes[j].every(p=>!usados.has(p.n))) candidatos.push(j);
+        if(candidatos.length){ primeiro=i; segundo=candidatos[Math.floor(Math.random()*candidatos.length)]; }
+      }
+      if(primeiro<0) throw new Error('Não foi possível montar dois trios sem jogadores repetidos. Ajuste a regra de homens por time.');
+      const ordem=[equipes[primeiro],equipes[segundo],...equipes.filter((_,i)=>i!==primeiro&&i!==segundo)];
+      return {
+        modo:'completo',
+        times:ordem.map(t=>t.map(p=>p.n)),
+        total:equipes.length,
+        metadata:{ jogadores:P.map(p=>({n:p.n,g:p.g})), misto:isMixed, cap:cap, permanencia:permanencia, combinacoesCompletas:true }
+      };
+    }
+
+    // Com reservas, só o primeiro jogo é montado agora. As próximas equipes
+    // serão escolhidas na hora, usando quem está há mais tempo fora da quadra.
+    const inicial=formFixed(P,3,isMixed,cap);
+    if(inicial.teams.length<2) throw new Error('Informe pelo menos 6 jogadores para formar dois trios completos.');
+    return {
+      modo:'reservas',
+      times:inicial.teams.slice(0,2).map(t=>t.map(p=>p.n)),
+      total:total,
+      metadata:{ jogadores:P.map(p=>({n:p.n,g:p.g})), misto:isMixed, cap:cap, permanencia:permanencia, combinacoesCompletas:false }
+    };
+  }
+
+  function listarFilaRotativa(times,comInicio){
+    const L=[];
+    const inicio=comInicio ? 2 : 0;
+    for(let i=inicio;i<times.length;i++) L.push(['q','Trio '+(i+1)+': '+times[i].join(' + ')]);
+    return L;
   }
 
     // dupla dinâmica: um jogo por rodada, sem fila (monta as duas duplas do confronto)
@@ -279,7 +370,8 @@
   function build(){
     const P = getPlayers();
     const isTrio = trio.checked, k = isTrio ? 3 : 2;
-    const isFixed = isTrio || fixed.checked, isMixed = mixed.checked;
+    const isRotativo = isTrio && document.querySelector('input[name="trioMode"]:checked').value === 'rotativo';
+    const isFixed = isTrio ? !isRotativo : fixed.checked, isMixed = mixed.checked;
     const unit = isTrio ? 'Trio' : 'Dupla';
     const nomes = time => time.map(p => p.n);
     const plano = { unit: unit, tamanho: k, fases: [] };
@@ -293,10 +385,10 @@
       return times;
     };
 
-    const rv = $('rounds').value.trim(), R = rv ? parseInt(rv,10) : 0;
+    const rv = $('rounds').value.trim(), R = isRotativo ? 0 : (rv ? parseInt(rv,10) : 0);
     const mraw = $('maxM').value.trim();
     let cap = null, capNote = '';
-    if(isMixed && isFixed && mraw !== ''){
+    if(isMixed && (isFixed || isRotativo) && mraw !== ''){
       const N0 = Math.min(k, Math.max(0, parseInt(mraw,10) || 0));
       const ex0 = $('maxMode').value === 'exato';
       const m = P.filter(p=>p.g==='M').length, f = P.length - m;
@@ -313,9 +405,9 @@
       throw new Error('Informe pelo menos '+(2*k)+' jogadores para sortear '+(isTrio ? 'trios' : 'duplas')+'.');
     }
 
-    const nm = t => t.map(p=>p.n).join(' + ');
+    const nm = t => t.map(p=>typeof p==='string' ? p : p.n).join(' + ');
     const VS = '\u00A0'.repeat(10)+'vs.';
-    const modo = isTrio ? 'Trio (fixo)' : fixed.checked ? 'Dupla fixa' : 'Dupla dinâmica';
+    const modo = isRotativo ? 'Trio rotativo' : isTrio ? 'Trio (fixo)' : fixed.checked ? 'Dupla fixa' : 'Dupla dinâmica';
     const L = [
       ['title','Sorteio de times'],
       ['m','Filtros: '+modo+' | Priorizar misto: '+(isMixed ? 'sim' : 'não')+' | '+P.length+' jogadores'+(R ? ' | Rodadas: '+R : '') +(cap ? ' | Máx. de homens por time: '+cap.N+(cap.exact ? ' (exato)' : ' (até o máximo)') : '')]
@@ -339,7 +431,29 @@
       }
     };
 
-    if(isFixed){
+    if(isRotativo){
+      const permanencia = P.length===6 ? false : winnerStays.checked;
+      const sorteio=genRotatingTrios(P,isMixed,cap,permanencia);
+      const fase={
+        titulo:'Sorteio', modo:'fila', times:sorteio.times,
+        rotativo:{modo:sorteio.modo,jogadores:sorteio.metadata.jogadores,misto:sorteio.metadata.misto,cap:sorteio.metadata.cap,permanencia:sorteio.metadata.permanencia,combinacoesCompletas:sorteio.metadata.combinacoesCompletas,totalCombinacoes:sorteio.total}
+      };
+      plano.fases.push(fase);
+      L.push(['h','JOGO 1']);
+      addGame(sorteio.times[0],sorteio.times[1],unit);
+      if(sorteio.modo==='completo'){
+        L.push(['h','FILA (trios possíveis)']);
+        L.push(...listarFilaRotativa(sorteio.times,true));
+        L.push(['m',sorteio.total.toLocaleString('pt-BR')+' combinações de trio. Cada trio aparece pelo menos uma vez; repetições podem ocorrer pela fila e pela permanência do vencedor.']);
+      }else{
+        const emQuadra=new Set([...sorteio.times[0],...sorteio.times[1]]);
+        const reservas=P.filter(p=>!emQuadra.has(p.n)).map(p=>p.n);
+        if(reservas.length) L.push(['h','RESERVAS (entram conforme o tempo de espera)'],['t',reservas.join(' + ')]);
+        L.push(['m',sorteio.total.toLocaleString('pt-BR')+' trios possíveis em teoria. As próximas equipes serão sorteadas durante os jogos.']);
+      }
+      if(P.length===6) L.push(['m','Com 6 jogadores, o vencedor sai após cada jogo para permitir a rotação.']);
+      else L.push(['m',permanencia ? 'O trio vencedor permanece por mais uma partida e depois sai da quadra.' : 'O trio vencedor sai da quadra após a partida.']);
+    }else if(isFixed){
       if(R){
         const hist = { pairs: new Set(), sat: {} };
         for(let r=1;r<=R;r++){
@@ -381,13 +495,42 @@
 
   const toText = L => L.map(([t,s])=>(t==='h' ? '\n' : '')+s).join('\n').replace(/\n{3,}/g,'\n\n');
 
+  let resultObserver = null, quantidadeFilaExibida = 0;
+  function renderizarResultadoProgressivo(){
+    const filas=lines.filter(([tipo])=>tipo==='q').length;
+    const maxFila=Math.max(0,quantidadeFilaExibida-2);
+    let exibidas=0;
+    const parte=lines.filter(([tipo])=>{
+      if(tipo!=='q') return true;
+      if(exibidas>=maxFila) return false;
+      exibidas++;
+      return true;
+    });
+    $('resultText').textContent=toText(parte);
+    const restante=filas-exibidas;
+    $('resultMore').hidden=restante<=0;
+    $('resultMore').textContent=restante>0 ? 'Role até o fim para carregar mais trios ('+restante.toLocaleString('pt-BR')+' restantes).' : '';
+  }
+
     // mostra a lista pura do sorteio (a mesma usada em Copiar e PDF)
    // mostra a lista pura do sorteio; "aberto" define se o bloco aparece expandido
   function mostrarResultado(aberto){
     $('err').hidden = true;
-    $('resultText').textContent = toText(lines);
+    if(resultObserver){ resultObserver.disconnect(); resultObserver=null; }
+    const totalFila=lines.filter(([tipo])=>tipo==='q').length;
+    quantidadeFilaExibida=Math.min(totalFila+2,20);
+    renderizarResultadoProgressivo();
     $('result').hidden = false;
     $('result').open = aberto;
+    if(totalFila>18 && 'IntersectionObserver' in window){
+      resultObserver=new IntersectionObserver(entries=>{
+        if(entries.some(e=>e.isIntersecting) && quantidadeFilaExibida<totalFila+2){
+          quantidadeFilaExibida=Math.min(totalFila+2,quantidadeFilaExibida+20);
+          renderizarResultadoProgressivo();
+        }
+      },{rootMargin:'120px'});
+      resultObserver.observe($('resultMore'));
+    }
   }
 
   $('go').addEventListener('click', ()=>{
@@ -481,6 +624,8 @@
     return {
       misto: mixed.checked,
       trio: trio.checked,
+      modoTrio: document.querySelector('input[name="trioMode"]:checked').value,
+      permanenciaVencedor: winnerStays.checked,
       fixa: fixed.checked,
       rodadas: $('rounds').value,
       maxHomens: $('maxM').value,
@@ -496,6 +641,9 @@
     if(!formulario) return;
     mixed.checked = formulario.misto;
     trio.checked = formulario.trio;
+    const modoTrio = formulario.modoTrio === 'rotativo' ? 'rotativo' : 'fixed';
+    document.querySelector('input[name="trioMode"][value="'+modoTrio+'"]').checked = true;
+    winnerStays.checked = formulario.permanenciaVencedor !== false;
     fixed.checked = formulario.fixa;
     dynamic.checked = !formulario.fixa;
     $('rounds').value = formulario.rodadas;

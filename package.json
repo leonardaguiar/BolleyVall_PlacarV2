@@ -8,8 +8,10 @@
   "scripts": {
     "dev": "next dev --hostname 0.0.0.0",
     "build": "next build",
+    "build:deploy": "npm run db:migrate && npm run build -- --webpack",
     "start": "next start --hostname 0.0.0.0",
-    "db:migrate": "node scripts/migrate-db.mjs"
+    "db:migrate": "node scripts/migrate-db.mjs",
+    "db:cleanup": "node scripts/cleanup-sessions.mjs"
   },
   "dependencies": {
     "next": "16.4.5",

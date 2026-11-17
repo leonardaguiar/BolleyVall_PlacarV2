@@ -105,7 +105,7 @@
         faseAtual: indice,
         jogos: andamento.jogos || 0,
         quadra: andamento.quadra.slice(),
-        chave: JSON.stringify([salvo.plano.id || '', indice, andamento.jogos || 0, nomes])
+        chave: JSON.stringify([salvo.plano.id || '', indice, andamento.jogos || 0, andamento.revisaoJogo || 0, andamento.quadra])
       };
     }catch(e){ return null; }
   }
@@ -238,6 +238,34 @@
   }
   setupPicker('a','dotsA','swatchesA');
   setupPicker('b','dotsB','swatchesB');
+  document.getElementById('swapSidesBtn').addEventListener('click', e=>{
+    e.stopPropagation();
+    const match = readActiveMatch();
+    if(match && window.Fila?.trocarLados()){
+      const swappedMatch = readActiveMatch();
+      activeMatchKey = swappedMatch?.chave || activeMatchKey;
+      if(swappedMatch){
+        nameEl.a.textContent = swappedMatch.nomes[0];
+        nameEl.b.textContent = swappedMatch.nomes[1];
+      }
+    }else{
+      [nameEl.a.textContent, nameEl.b.textContent] = [nameEl.b.textContent, nameEl.a.textContent];
+    }
+    [state.a, state.b] = [state.b, state.a];
+    [scoreEl.a.textContent, scoreEl.b.textContent] = [state.a, state.b];
+    fitScore('a'); fitScore('b');
+    const rootStyle = document.documentElement.style;
+    const computed = getComputedStyle(document.documentElement);
+    const colorA = computed.getPropertyValue('--team-a').trim();
+    const colorADim = computed.getPropertyValue('--team-a-dim').trim();
+    const colorB = computed.getPropertyValue('--team-b').trim();
+    const colorBDim = computed.getPropertyValue('--team-b-dim').trim();
+    rootStyle.setProperty('--team-a', colorB);
+    rootStyle.setProperty('--team-a-dim', colorBDim);
+    rootStyle.setProperty('--team-b', colorA);
+    rootStyle.setProperty('--team-b-dim', colorADim);
+    saveState();
+  });
   document.addEventListener('click', ()=>{
     document.getElementById('swatchesA').classList.remove('open');
     document.getElementById('swatchesB').classList.remove('open');

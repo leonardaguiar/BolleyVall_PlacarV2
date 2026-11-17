@@ -36,6 +36,8 @@
   .card h2{font-size:13px;margin:0 0 8px;color:var(--ink-dim);font-weight:700;letter-spacing:.03em;text-transform:uppercase;}
   label.chk{display:flex;align-items:center;gap:10px;padding:8px 0;font-size:15px;cursor:pointer;}
   input[type=checkbox]{width:22px;height:22px;accent-color:var(--accent);flex:0 0 auto;}
+  input[type=radio]{width:22px;height:22px;accent-color:var(--accent);flex:0 0 auto;}
+  input:disabled{cursor:not-allowed;}
   .row{display:flex;gap:18px;flex-wrap:wrap;}
   .off{opacity:.4;}
   textarea{
@@ -95,6 +97,10 @@
 
   #result summary{cursor:pointer;font-weight:700;font-size:15px;padding:4px 0 10px;}
   #result:not([open]) summary{padding-bottom:0;}
+  #trackerParticipants summary{cursor:pointer;font-weight:700;font-size:15px;padding:4px 0 10px;}
+  #trackerParticipants .field input,#trackerParticipants .field select{width:100%;max-width:280px;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:8px;font:inherit;}
+  #trackerParticipants .field{flex-wrap:wrap;}
+  #trackerParticipants .btn-mini{flex:0 0 auto;}
 
   .actions{flex-wrap:wrap;}
   .actions .ghost{min-width:130px;}
@@ -102,22 +108,59 @@
     background:rgba(47,111,237,.15);border:1px solid var(--accent);
     border-radius:10px;padding:10px 12px;font-size:14px;margin:14px 0;
   }
+  #sharedProgress summary{cursor:pointer;font-weight:700;font-size:15px;padding:4px 0 10px;}
+  #sharedProgress .shared-list{margin-top:14px;padding-top:12px;border-top:1px solid var(--line);}
+  #sharedProgress .shared-list h2{font-size:13px;margin:0 0 8px;color:var(--ink-dim);font-weight:700;letter-spacing:.03em;text-transform:uppercase;}
+  #sharedProgress ol{margin:0;padding-left:24px;font-size:14px;line-height:1.6;}
 </style>
 </head>
 <body>
 <div class="wrap">
   <header>
-    <a class="back" href="/">← Voltar</a>
+    <a class="back" id="backLink" href="/">← Voltar</a>
     <h1>Sortear time</h1>
   </header>
+
+  <div class="aviso" id="sharedViewerNote" hidden>
+    Modo visualizador: você acompanha a sala até gerar um novo sorteio local neste aparelho.
+  </div>
+  <details class="card" id="sharedProgress" hidden>
+    <summary>Fila, histórico e ranking</summary>
+    <p class="small" id="sharedStatus">Conectando à sala…</p>
+    <section class="shared-list">
+      <h2>Fila</h2>
+      <ol id="sharedQueue"></ol>
+      <p class="small" id="sharedQueueEmpty" hidden>Sem times aguardando.</p>
+    </section>
+    <section class="shared-list">
+      <h2>Histórico</h2>
+      <ol id="sharedHistory"></ol>
+      <p class="small" id="sharedHistoryEmpty" hidden>Nenhuma partida encerrada.</p>
+    </section>
+    <section class="shared-list">
+      <h2>Ranking</h2>
+      <ol id="sharedRanking"></ol>
+      <p class="small" id="sharedRankingEmpty" hidden>O ranking aparece após a primeira partida.</p>
+    </section>
+  </details>
 
   <section class="card">
     <h2>Opções</h2>
     <label class="chk"><input type="checkbox" id="mixed"> Priorizar misto</label>
     <label class="chk"><input type="checkbox" id="trio"> Trio (desmarcado = dupla)</label>
+    <div id="trioModeBox" hidden>
+      <div class="row">
+        <label class="chk"><input type="radio" name="trioMode" value="fixed" checked> Trio fixo</label>
+        <label class="chk"><input type="radio" name="trioMode" value="rotativo"> Trio rotativo · Modelo 1</label>
+        <label class="chk"><input type="radio" name="trioMode" value="rotativo-modelo2"> Trio rotativo · Modelo 2</label>
+      </div>
+      <label class="chk" id="stayRow"><input type="checkbox" id="winnerStays" checked> Trio vencedor permanece por mais uma partida</label>
+      <p class="small" id="stayHint" hidden>Com 6 jogadores, os vencedores saem para permitir a rotação.</p>
+    </div>
     <div class="row" id="modeRow">
       <label class="chk"><input type="checkbox" id="fixed"> Dupla fixa</label>
       <label class="chk"><input type="checkbox" id="dynamic" checked> Dupla dinâmica</label>
+      <label class="chk"><input type="checkbox" id="dynamicModel2"> Dupla dinâmica · Modelo 2</label>
     </div>
     <div class="field">
       <label for="rounds">Rodadas (opcional)</label>
@@ -157,6 +200,7 @@
     <p class="small">Separe os nomes por vírgula ou por linha.</p>
   </section>
 
+  <p class="small" id="comboCount" hidden></p>
   <div class="err" id="err" hidden></div>
   <button class="primary" id="go">Sortear</button>
   <div class="aviso" id="avisoRecebido" hidden>
@@ -166,6 +210,7 @@
   <details class="card" id="result" hidden>
     <summary>Lista do sorteio (copiar / PDF)</summary>
     <pre id="resultText"></pre>
+    <p class="small" id="resultMore" hidden></p>
     <div class="actions">
       <button class="ghost" id="copyBtn">Copiar</button>
       <button class="ghost" id="pdfBtn">Gerar PDF</button>
@@ -176,8 +221,27 @@
   <section id="tracker" hidden style="margin-top:14px;">
     <div class="card" id="trackerQuadra"></div>
     <div class="card" id="trackerFila"></div>
+    <details class="card" id="trackerParticipants" hidden>
+      <summary>Ausências e participantes</summary>
+      <p class="small" id="participantStatus">As alterações valem para os próximos sorteios.</p>
+      <div id="participantList"></div>
+      <div class="field">
+        <label for="participantNameNew">Adicionar pessoa</label>
+        <input type="text" id="participantNameNew" maxlength="80" placeholder="Nome">
+      </div>
+      <div class="field" id="participantGenderRow" hidden>
+        <label for="participantGenderNew">Grupo</label>
+        <select id="participantGenderNew">
+          <option value="">Selecione</option>
+          <option value="M">Homem</option>
+          <option value="F">Mulher</option>
+        </select>
+      </div>
+      <button class="ghost" id="addParticipantBtn" type="button" data-acao="adicionar-participante">Adicionar à competição</button>
+    </details>
     <div class="card" id="trackerHistorico"></div>
     <div class="card" id="trackerRanking"></div>
+    <div class="card"><button class="ghost" id="finishCompetition" type="button" hidden>Encerrar competição</button></div>
   </section>
 </div>
 

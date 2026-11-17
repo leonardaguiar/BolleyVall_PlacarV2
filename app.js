@@ -9,10 +9,21 @@
   if(window.visualViewport){ window.visualViewport.addEventListener('resize', syncSize); }
 
   let wakeLock = null;
+  let wakeLockRequestPending = false;
   async function requestWakeLock(){
+    if(!('wakeLock' in navigator) || document.visibilityState !== 'visible' || wakeLockRequestPending || (wakeLock && !wakeLock.released)) return;
+    wakeLockRequestPending = true;
     try{
-      if('wakeLock' in navigator){ wakeLock = await navigator.wakeLock.request('screen'); }
+      const lock = await navigator.wakeLock.request('screen');
+      wakeLock = lock;
+      lock.addEventListener('release', ()=>{
+        if(wakeLock === lock){
+          wakeLock = null;
+          if(document.visibilityState === 'visible') setTimeout(requestWakeLock, 0);
+        }
+      }, {once:true});
     }catch(e){ /* not supported / denied */ }
+    finally{ wakeLockRequestPending = false; }
   }
   requestWakeLock();
   document.addEventListener('visibilitychange', ()=>{
@@ -238,6 +249,34 @@
   }
   setupPicker('a','dotsA','swatchesA');
   setupPicker('b','dotsB','swatchesB');
+  document.getElementById('swapSidesBtn').addEventListener('click', e=>{
+    e.stopPropagation();
+    const match = readActiveMatch();
+    if(match && window.Fila?.trocarLados()){
+      const swappedMatch = readActiveMatch();
+      activeMatchKey = swappedMatch?.chave || activeMatchKey;
+      if(swappedMatch){
+        nameEl.a.textContent = swappedMatch.nomes[0];
+        nameEl.b.textContent = swappedMatch.nomes[1];
+      }
+    }else{
+      [nameEl.a.textContent, nameEl.b.textContent] = [nameEl.b.textContent, nameEl.a.textContent];
+    }
+    [state.a, state.b] = [state.b, state.a];
+    [scoreEl.a.textContent, scoreEl.b.textContent] = [state.a, state.b];
+    fitScore('a'); fitScore('b');
+    const rootStyle = document.documentElement.style;
+    const computed = getComputedStyle(document.documentElement);
+    const colorA = computed.getPropertyValue('--team-a').trim();
+    const colorADim = computed.getPropertyValue('--team-a-dim').trim();
+    const colorB = computed.getPropertyValue('--team-b').trim();
+    const colorBDim = computed.getPropertyValue('--team-b-dim').trim();
+    rootStyle.setProperty('--team-a', colorB);
+    rootStyle.setProperty('--team-a-dim', colorBDim);
+    rootStyle.setProperty('--team-b', colorA);
+    rootStyle.setProperty('--team-b-dim', colorADim);
+    saveState();
+  });
   document.addEventListener('click', ()=>{
     document.getElementById('swatchesA').classList.remove('open');
     document.getElementById('swatchesB').classList.remove('open');
@@ -349,7 +388,7 @@
 
   window.addEventListener('appinstalled', ()=> installBtn.classList.add('hidden'));
 
-  // --- easter egg: 3 toques no "v1.0" ---
+  // --- easter egg: 3 toques na versão exibida ---
   const versionTag = document.getElementById('versionTag');
   const easterOverlay = document.getElementById('easterOverlay');
   const easterCredits = document.getElementById('easterCredits');

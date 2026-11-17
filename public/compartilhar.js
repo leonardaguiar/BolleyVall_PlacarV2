@@ -71,13 +71,36 @@ const Compartilhar = (function () {
     return Array.isArray(time) && time.length > 0 && time.every(nome => typeof nome === 'string');
   }
 
+  function ehRotativoValido(rotativo,times){
+    if(!rotativo || typeof rotativo!=='object') return false;
+    const jogadores=rotativo.jogadores;
+    if(!Array.isArray(jogadores)||jogadores.length<6||!jogadores.every(p=>p&&typeof p.n==='string'&&(p.g===null||p.g==='M'||p.g==='F'))) return false;
+    const nomes=new Set(jogadores.map(p=>p.n.toLocaleLowerCase('pt-BR')));
+    if(nomes.size!==jogadores.length||typeof rotativo.misto!=='boolean'||typeof rotativo.permanencia!=='boolean') return false;
+    if(!Number.isSafeInteger(rotativo.totalCombinacoes)||rotativo.totalCombinacoes<1) return false;
+    if(rotativo.cap!==null&&(!rotativo.cap||!Number.isInteger(rotativo.cap.N)||rotativo.cap.N<0||rotativo.cap.N>3||typeof rotativo.cap.exact!=='boolean')) return false;
+    if(rotativo.modo==='completo') return rotativo.combinacoesCompletas===true&&rotativo.totalCombinacoes<=2000&&times.length===rotativo.totalCombinacoes;
+    if(rotativo.modo==='reservas') return rotativo.combinacoesCompletas===false&&times.length>=2;
+    return false;
+  }
+
+  function ehModelo2Valido(modelo,times){
+    if(!modelo||typeof modelo!=='object'||![2,3].includes(modelo.tamanho)) return false;
+    if(!Array.isArray(modelo.jogadores)||!modelo.jogadores.every(p=>p&&typeof p.n==='string'&&(p.g===null||p.g==='M'||p.g==='F'))) return false;
+    if(typeof modelo.misto!=='boolean'||typeof modelo.permanencia!=='boolean'||!Number.isSafeInteger(modelo.totalCombinacoes)||modelo.totalCombinacoes<0) return false;
+    if(!Array.isArray(modelo.combinacoesCompartilhadas)||modelo.combinacoesCompartilhadas.length>2000||!modelo.combinacoesCompartilhadas.every(t=>Array.isArray(t)&&t.length===modelo.tamanho&&t.every(n=>typeof n==='string'))) return false;
+    return Array.isArray(times)&&times.length>=2&&times.every(ehListaDeNomes);
+  }
+
   function ehFaseValida(fase) {
     return fase
       && (fase.modo === 'fila' || fase.modo === 'jogo')
       && typeof fase.titulo === 'string'
       && Array.isArray(fase.times)
       && fase.times.length >= 2
-      && fase.times.every(ehListaDeNomes);
+      && fase.times.every(ehListaDeNomes)
+      && (fase.rotativo===undefined || ehRotativoValido(fase.rotativo,fase.times))
+      && (fase.modelo2===undefined || ehModelo2Valido(fase.modelo2,fase.times));
   }
 
   function ehLinhaValida(linha) {
@@ -103,7 +126,10 @@ const Compartilhar = (function () {
     return {
       misto: formulario.misto === true,
       trio: formulario.trio === true,
+      modoTrio: ['rotativo','rotativo-modelo2'].includes(formulario.modoTrio) ? formulario.modoTrio : 'fixed',
+      permanenciaVencedor: formulario.permanenciaVencedor !== false,
       fixa: formulario.fixa === true,
+      duplaModelo2: formulario.duplaModelo2 === true,
       rodadas: texto(formulario.rodadas),
       maxHomens: texto(formulario.maxHomens),
       regraMax: formulario.regraMax === 'exato' ? 'exato' : 'ate',

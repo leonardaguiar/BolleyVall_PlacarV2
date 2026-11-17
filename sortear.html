@@ -36,6 +36,8 @@
   .card h2{font-size:13px;margin:0 0 8px;color:var(--ink-dim);font-weight:700;letter-spacing:.03em;text-transform:uppercase;}
   label.chk{display:flex;align-items:center;gap:10px;padding:8px 0;font-size:15px;cursor:pointer;}
   input[type=checkbox]{width:22px;height:22px;accent-color:var(--accent);flex:0 0 auto;}
+  input[type=radio]{width:22px;height:22px;accent-color:var(--accent);flex:0 0 auto;}
+  input:disabled{cursor:not-allowed;}
   .row{display:flex;gap:18px;flex-wrap:wrap;}
   .off{opacity:.4;}
   textarea{
@@ -115,6 +117,14 @@
     <h2>Opções</h2>
     <label class="chk"><input type="checkbox" id="mixed"> Priorizar misto</label>
     <label class="chk"><input type="checkbox" id="trio"> Trio (desmarcado = dupla)</label>
+    <div id="trioModeBox" hidden>
+      <div class="row">
+        <label class="chk"><input type="radio" name="trioMode" value="fixed" checked> Trio fixo</label>
+        <label class="chk"><input type="radio" name="trioMode" value="rotativo"> Trio rotativo</label>
+      </div>
+      <label class="chk" id="stayRow"><input type="checkbox" id="winnerStays" checked> Trio vencedor permanece por mais uma partida</label>
+      <p class="small" id="stayHint" hidden>Com 6 jogadores, os vencedores saem para permitir a rotação.</p>
+    </div>
     <div class="row" id="modeRow">
       <label class="chk"><input type="checkbox" id="fixed"> Dupla fixa</label>
       <label class="chk"><input type="checkbox" id="dynamic" checked> Dupla dinâmica</label>
@@ -157,6 +167,7 @@
     <p class="small">Separe os nomes por vírgula ou por linha.</p>
   </section>
 
+  <p class="small" id="comboCount" hidden></p>
   <div class="err" id="err" hidden></div>
   <button class="primary" id="go">Sortear</button>
   <div class="aviso" id="avisoRecebido" hidden>
@@ -166,6 +177,7 @@
   <details class="card" id="result" hidden>
     <summary>Lista do sorteio (copiar / PDF)</summary>
     <pre id="resultText"></pre>
+    <p class="small" id="resultMore" hidden></p>
     <div class="actions">
       <button class="ghost" id="copyBtn">Copiar</button>
       <button class="ghost" id="pdfBtn">Gerar PDF</button>

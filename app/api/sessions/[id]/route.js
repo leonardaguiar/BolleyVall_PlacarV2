@@ -2,9 +2,13 @@ import {
   authorizeSessionAccess,
   getSession,
   SessionNotFoundError,
+  SessionNotActiveError,
   SessionRevisionConflictError,
+  SessionControlRequiredError,
   updateSession
 } from '../../../../lib/server/sessions.js';
+import { getShareOrigin } from '../../../../lib/server/share-origin.js';
+import { getControlState } from '../../../../lib/server/control-lease.js';
 
 export const runtime = 'nodejs';
 
@@ -39,7 +43,8 @@ export async function GET(request, context) {
 
     const session = await getSession(id);
     if (!session) return json({ error: 'Sala não encontrada.' }, 404);
-    return json(session);
+    const control = await getControlState({ id, accessId: access.id, deviceId: request.headers.get('x-device-id') || '' });
+    return json({ ...session, role: access.role, control, shareOrigin: getShareOrigin(request) });
   } catch (error) {
     if (error?.code === 'DATABASE_URL_MISSING') {
       return json({ error: 'Banco de dados não configurado no servidor.' }, 503);
@@ -76,9 +81,10 @@ export async function PATCH(request, context) {
       expectedRevision: input.expectedRevision,
       plan: input.plan,
       state: input.state,
-      actorAccessId: access.id
+      actorAccessId: access.id,
+      deviceId: request.headers.get('x-device-id') || ''
     });
-    return json(session);
+    return json({ ...session, role: access.role });
   } catch (error) {
     if (error instanceof TypeError || error instanceof RangeError) {
       return json({ error: error.message }, 400);
@@ -89,6 +95,10 @@ export async function PATCH(request, context) {
     if (error instanceof SessionRevisionConflictError) {
       return json({ error: error.message, currentRevision: error.currentRevision }, 409);
     }
+    if (error instanceof SessionNotActiveError) {
+      return json({ error: error.message }, 409);
+    }
+    if (error instanceof SessionControlRequiredError) return json({ error: error.message }, 409);
     if (error?.code === 'DATABASE_URL_MISSING') {
       return json({ error: 'Banco de dados não configurado no servidor.' }, 503);
     }

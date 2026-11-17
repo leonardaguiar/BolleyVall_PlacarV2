@@ -20,6 +20,7 @@ const Fila = (function () {
   let estado = null;           // andamento: quadra, fila, histórico e pilha de desfazer
   let linhasDoSorteio = [];    // lista pura do sorteio (para copiar/PDF depois de recarregar)
   let formularioDoSorteio = null;   // o que foi preenchido na tela no momento do sorteio
+  let filaObserver = null;
 
   const $ = id => document.getElementById(id);
 
@@ -33,6 +34,19 @@ const Fila = (function () {
   const rotulo = id => plano.unit + ' ' + (id + 1);
   const descricao = id => rotulo(id) + ': ' + dadosDaFase().times[id].join(' + ');
   const timeIncompleto = id => dadosDaFase().times[id].length < (plano.tamanho || 0);
+  const chavePessoa = nome => String(nome).toLocaleLowerCase('pt-BR');
+
+  function criarEsperaRotativa(config,quadra,times){
+    if(!config || config.modo!=='reservas') return null;
+    const emQuadra=new Set(quadra.flatMap(id=>times[id]||[]).map(chavePessoa));
+    const espera={}, partidas={};
+    config.jogadores.forEach(p=>{
+      const chave=chavePessoa(p.n);
+      espera[chave]=emQuadra.has(chave) ? 0 : 1;
+      partidas[chave]=emQuadra.has(chave) ? 1 : 0;
+    });
+    return {espera:espera,partidas:partidas};
+  }
 
   // ---------- criação do estado ----------
   function criarEstadoDaFase(fase) {
@@ -52,7 +66,9 @@ return {
       fila: ids.slice(2).map(id => ({ id: id, jogou: false })),
       sequencia: sequencia,                                   // jogos seguidos de cada time em quadra
       jogos: 0,
-      vencedor: null                                          // só usado no modo 'jogo'
+      vencedor: null,                                         // só usado no modo 'jogo'
+      filaVisivel: 20,
+      rotativoEstado: criarEsperaRotativa(fase.rotativo,[ids[0],ids[1]],fase.times)
     };
   }
 
@@ -153,7 +169,121 @@ return { linhas: salvo.linhas, formulario: formularioDoSorteio };
     return fase.fila.length ? fase.fila[0].id : null;
   }
 
+  function compartilhaJogador(fase,idA,idB){
+    const A=new Set((dadosDaFase().times[idA]||[]).map(chavePessoa));
+    return (dadosDaFase().times[idB]||[]).some(p=>A.has(chavePessoa(p)));
+  }
+
+  function retirarProximoCompativel(fase,idContra){
+    for(let tentativa=0;tentativa<2;tentativa++){
+      if(fase.fila.length && fase.fila.every(item=>item.jogou)) fase.fila.forEach(item=>{item.jogou=false;});
+      if(tentativa===1) fase.fila.forEach(item=>{item.jogou=false;});
+      const pos=fase.fila.findIndex(item=>!item.jogou && !compartilhaJogador(fase,item.id,idContra));
+      if(pos>=0) return fase.fila.splice(pos,1)[0].id;
+    }
+    return null;
+  }
+
+  function retirarDoisCompativeis(fase){
+    for(let tentativa=0;tentativa<2;tentativa++){
+      if(fase.fila.length>1 && fase.fila.every(item=>item.jogou)) fase.fila.forEach(item=>{item.jogou=false;});
+      for(let i=0;i<fase.fila.length;i++){
+        if(fase.fila[i].jogou) continue;
+        for(let j=i+1;j<fase.fila.length;j++){
+          if(fase.fila[j].jogou || compartilhaJogador(fase,fase.fila[i].id,fase.fila[j].id)) continue;
+          const a=fase.fila[i].id,b=fase.fila[j].id;
+          fase.fila.splice(j,1); fase.fila.splice(i,1);
+          return [a,b];
+        }
+      }
+      fase.fila.forEach(item=>{item.jogou=false;});
+    }
+    return null;
+  }
+
+  function escolherEquipesAoVivo(fase,quantas,foraDaQuadra){
+    const config=dadosDaFase().rotativo, estadoEspera=fase.rotativoEstado;
+    const excluidos=new Set((foraDaQuadra||[]).map(chavePessoa));
+    const restantes=config.jogadores.filter(p=>!excluidos.has(chavePessoa(p)));
+    const prioridade=p=>{
+      const k=chavePessoa(p.n);
+      return (estadoEspera.espera[k]||0)*100-(estadoEspera.partidas[k]||0)*4;
+    };
+    const empatados=list=>list.map(p=>({p:p,t:Math.random()})).sort((a,b)=>prioridade(b.p)-prioridade(a.p)||a.t-b.t).map(x=>x.p);
+    const homens=empatados(restantes.filter(p=>p.g==='M'));
+    const mulheres=empatados(restantes.filter(p=>p.g==='F'));
+    if(!config.misto){
+      const selecionados=empatados(restantes).slice(0,quantas*3);
+      if(selecionados.length<quantas*3) return null;
+      const embaralhados=selecionados.sort(()=>Math.random()-.5);
+      return {equipes:Array.from({length:quantas},(_,i)=>embaralhados.slice(i*3,i*3+3))};
+    }
+
+    function montar(cap,relaxado){
+      const opcoes=[];
+      const buscar=(atuais)=>{
+        if(atuais.length===quantas){
+          const totalM=atuais.reduce((a,b)=>a+b,0),totalF=quantas*3-totalM;
+          if(totalM>homens.length||totalF>mulheres.length) return;
+          if(cap){
+            if(cap.exact&&!relaxado&&atuais.some(n=>n!==cap.N)) return;
+            if(!cap.exact&&atuais.some(n=>n>cap.N)) return;
+            if(cap.exact&&relaxado&&atuais.some(n=>n>cap.N)) return;
+          }
+          const ms=homens.slice(0,totalM),fs=mulheres.slice(0,totalF),equipes=[];
+          let mi=0,fi=0,score=0;
+          atuais.forEach(n=>{
+            const equipe=[...ms.slice(mi,mi+n),...fs.slice(fi,fi+3-n)];
+            mi+=n; fi+=3-n;
+            score+=equipe.reduce((s,p)=>s+prioridade(p),0);
+            if(equipe.some(p=>p.g==='M')&&equipe.some(p=>p.g==='F')) score+=config.misto?200:0;
+            equipes.push(equipe);
+          });
+          if(quantas===2){
+            const esperas=equipes.map(t=>t.reduce((s,p)=>s+(estadoEspera.espera[chavePessoa(p.n)]||0),0));
+            score-=Math.abs(esperas[0]-esperas[1])*2;
+          }
+          opcoes.push({equipes,score:score+Math.random()});
+          return;
+        }
+        for(let n=0;n<=3;n++){
+          if(cap&&!relaxado&&cap.exact&&n!==cap.N) continue;
+          if(cap&&(!cap.exact||relaxado)&&n>cap.N) continue;
+          atuais.push(n); buscar(atuais); atuais.pop();
+        }
+      };
+      buscar([]);
+      return opcoes.sort((a,b)=>b.score-a.score)[0]||null;
+    }
+    return montar(config.cap,false)|| (config.cap&&config.cap.exact ? montar({...config.cap,exact:false},true) : null) || montar(null,true);
+  }
+
+  function atualizarEspera(fase){
+    const config=dadosDaFase().rotativo, estadoEspera=fase.rotativoEstado;
+    const emQuadra=new Set(fase.quadra.flatMap(id=>dadosDaFase().times[id]||[]).map(chavePessoa));
+    config.jogadores.forEach(p=>{
+      const k=chavePessoa(p.n);
+      if(emQuadra.has(k)){ estadoEspera.espera[k]=0; estadoEspera.partidas[k]=(estadoEspera.partidas[k]||0)+1; }
+      else estadoEspera.espera[k]=(estadoEspera.espera[k]||0)+1;
+    });
+  }
+
+  function adicionarTrioAoPlano(fase,pessoas){
+    const id=dadosDaFase().times.length;
+    dadosDaFase().times.push(pessoas.map(p=>p.n));
+    fase.sequencia[id]=1;
+    return id;
+  }
+
   function colocarDoisNovosEmQuadra(fase) {
+    if(dadosDaFase().rotativo){
+      const novos=retirarDoisCompativeis(fase);
+      if(novos){ fase.quadra=novos; novos.forEach(id=>{fase.sequencia[id]=1;}); return; }
+      if(dadosDaFase().rotativo.modo==='reservas'){
+        const equipes=escolherEquipesAoVivo(fase,2,[]);
+        if(equipes){ fase.quadra=equipes.equipes.map(time=>adicionarTrioAoPlano(fase,time)); return; }
+      }
+    }
     const primeiro = retirarProximoDaFila(fase);
     const segundo = retirarProximoDaFila(fase);
     fase.quadra = [primeiro, segundo];
@@ -162,13 +292,44 @@ return { linhas: salvo.linhas, formulario: formularioDoSorteio };
   }
 
   function atualizarFilaDepoisDoJogo(fase, idVencedor, idPerdedor) {
+    const rotativo=dadosDaFase().rotativo;
+    if(rotativo && rotativo.modo==='reservas'){
+      atualizarEspera(fase);
+      const deveFicar=rotativo.permanencia && fase.sequencia[idVencedor] < JOGOS_SEGUIDOS_MAXIMO;
+      if(deveFicar){
+        const pessoasVencedoras=dadosDaFase().times[idVencedor];
+        const desafiante=escolherEquipesAoVivo(fase,1,pessoasVencedoras);
+        if(desafiante && desafiante.equipes[0].length===3){
+          const idNovo=adicionarTrioAoPlano(fase,desafiante.equipes[0]);
+          fase.sequencia[idVencedor]+=1;
+          fase.quadra=[idVencedor,idNovo];
+          return;
+        }
+      }
+      const novos=escolherEquipesAoVivo(fase,2,[]);
+      if(!novos || novos.equipes.length!==2) throw new Error('Não foi possível formar dois trios com os jogadores disponíveis.');
+      fase.quadra=novos.equipes.map(time=>adicionarTrioAoPlano(fase,time));
+      return;
+    }
+
     fase.fila.push({ id: idPerdedor, jogou: true });            // quem perde vai para o fim
 
-    if (fase.sequencia[idVencedor] >= JOGOS_SEGUIDOS_MAXIMO) {
+    const maximo=rotativo ? (rotativo.permanencia ? JOGOS_SEGUIDOS_MAXIMO : 1) : JOGOS_SEGUIDOS_MAXIMO;
+    if (fase.sequencia[idVencedor] >= maximo) {
       // o vencedor já usou a partida adicional: também sai, atrás de quem perdeu
       fase.fila.push({ id: idVencedor, jogou: true });
       colocarDoisNovosEmQuadra(fase);
-    } else {
+    } else if(rotativo){
+      const desafiante=retirarProximoCompativel(fase,idVencedor);
+      if(desafiante===null){
+        fase.fila.push({id:idVencedor,jogou:true});
+        colocarDoisNovosEmQuadra(fase);
+      }else{
+        fase.sequencia[idVencedor]+=1;
+        fase.sequencia[desafiante]=1;
+        fase.quadra=[idVencedor,desafiante];
+      }
+    }else {
       // o vencedor fica e enfrenta o próximo da fila
       const desafiante = retirarProximoDaFila(fase);
       fase.sequencia[idVencedor] += 1;
@@ -375,7 +536,10 @@ return { linhas: salvo.linhas, formulario: formularioDoSorteio };
 
     if (timeIncompleto(id)) nome.appendChild(criar('div', 'etiqueta', 'INCOMPLETO'));
 
-    if (dados.modo === 'fila' && fase.sequencia[id] >= JOGOS_SEGUIDOS_MAXIMO) {
+    const saiDepois=dados.rotativo
+      ? (!dados.rotativo.permanencia || fase.sequencia[id] >= JOGOS_SEGUIDOS_MAXIMO)
+      : fase.sequencia[id] >= JOGOS_SEGUIDOS_MAXIMO;
+    if (dados.modo === 'fila' && saiDepois) {
       nome.appendChild(criar('div', 'etiqueta', 'SAI APÓS ESTE JOGO'));
     }
     
@@ -430,19 +594,40 @@ return { linhas: salvo.linhas, formulario: formularioDoSorteio };
     caixa.appendChild(linhaCompartilhar);
 
     if (dados.modo === 'fila') {
-      caixa.appendChild(criar('div', 'etiqueta',
-        'O vencedor fica no máximo mais 1 jogo; quem perde vai para o fim da fila'));
+      const explicacao=dados.rotativo
+        ? (dados.rotativo.permanencia ? 'O trio vencedor permanece por mais uma partida e depois sai da quadra.' : 'O trio vencedor sai da quadra após cada partida.')
+        : 'O vencedor fica no máximo mais 1 jogo; quem perde vai para o fim da fila';
+      caixa.appendChild(criar('div', 'etiqueta', explicacao));
     }
   }
 
   function renderizarFila() {
     const caixa = $('trackerFila');
+    if(filaObserver){ filaObserver.disconnect(); filaObserver=null; }
     caixa.innerHTML = '';
     if (dadosDaFase().modo === 'jogo') { caixa.hidden = true; return; }
     caixa.hidden = false;
     caixa.appendChild(criar('h2', '', 'Fila'));
 
     const fase = faseAtual();
+    const configRotativa=dadosDaFase().rotativo;
+    if(configRotativa && configRotativa.modo==='reservas'){
+      caixa.appendChild(criar('div','small','Reservas · quem está há mais tempo sem jogar entra primeiro.'));
+      const emQuadra=new Set(fase.quadra.flatMap(id=>dadosDaFase().times[id]||[]).map(chavePessoa));
+      const pessoas=configRotativa.jogadores.filter(p=>!emQuadra.has(chavePessoa(p.n))).slice().sort((a,b)=>{
+        const ka=chavePessoa(a.n),kb=chavePessoa(b.n);
+        return (fase.rotativoEstado.espera[kb]||0)-(fase.rotativoEstado.espera[ka]||0)
+          || (fase.rotativoEstado.partidas[ka]||0)-(fase.rotativoEstado.partidas[kb]||0);
+      });
+      pessoas.forEach((p,i)=>{
+        const linha=criar('div','linha'+(i<3?' proximo':''));
+        linha.appendChild(criar('div','nome',p.n));
+        const espera=fase.rotativoEstado.espera[chavePessoa(p.n)]||0;
+        linha.appendChild(criar('span','etiqueta',espera+' jogo(s) aguardando'));
+        caixa.appendChild(linha);
+      });
+      return;
+    }
     if (fase.fila.length === 0) {
       caixa.appendChild(criar('div', 'etiqueta', 'FILA VAZIA'));
       return;
@@ -452,7 +637,8 @@ return { linhas: salvo.linhas, formulario: formularioDoSorteio };
     const todosJaJogaram = fase.fila.every(item => item.jogou);   // nova volta: ninguém aparece riscado
     
 
-    fase.fila.forEach(item => {
+    const visiveis=configRotativa ? fase.fila.slice(0,fase.filaVisivel||20) : fase.fila;
+    visiveis.forEach(item => {
       let classe = 'linha';
       if (item.id === idProximo) classe += ' proximo';
       if (item.jogou && !todosJaJogaram) classe += ' jogou';
@@ -469,6 +655,20 @@ return { linhas: salvo.linhas, formulario: formularioDoSorteio };
       linha.appendChild(grupo);
       caixa.appendChild(linha);
     });
+    if(configRotativa && visiveis.length<fase.fila.length){
+      const sentinela=criar('div','small','Role até o fim para carregar os próximos trios.');
+      sentinela.setAttribute('data-fila-sentinela','true');
+      caixa.appendChild(sentinela);
+      if('IntersectionObserver' in window){
+        filaObserver=new IntersectionObserver(entries=>{
+          if(entries.some(e=>e.isIntersecting)){
+            fase.filaVisivel=Math.min(fase.fila.length,(fase.filaVisivel||20)+20);
+            renderizar();
+          }
+        },{rootMargin:'120px'});
+        filaObserver.observe(sentinela);
+      }
+    }
   }
 
   function renderizarHistorico() {
@@ -568,6 +768,16 @@ return {
     return estado ? estado.historico.length : 0;
   }
 
+  function trocarLados() {
+    if (!estado) return false;
+    const fase = faseAtual();
+    if (!Array.isArray(fase?.quadra) || fase.quadra.length !== 2) return false;
+    [fase.quadra[0], fase.quadra[1]] = [fase.quadra[1], fase.quadra[0]];
+    salvar();
+    renderizar();
+    return true;
+  }
+
   window.addEventListener('storage', evento => {
     if (evento.key === CHAVE_STORAGE) {
       carregar();
@@ -587,6 +797,7 @@ return {
     obterAndamento: obterAndamento,
     iniciarComAndamento: iniciarComAndamento,
     quantidadeDeJogos: quantidadeDeJogos,
+    trocarLados: trocarLados,
     processarPedidoPendente: processarPedidoPendente
   };
 

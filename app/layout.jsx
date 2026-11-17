@@ -5,6 +5,7 @@ export const metadata = {
   title: 'BolleyVall Placar',
   description: 'Placar e organização de jogos recreativos de vôlei.',
   manifest: '/manifest.json',
+  icons: { icon: '/favicon.png' },
 };
 
 export const viewport = {

@@ -1,6 +1,9 @@
 import { createSession } from '../../../lib/server/sessions.js';
+import { getShareOrigin } from '../../../lib/server/share-origin.js';
+import { consumeSessionCreationLimit } from '../../../lib/server/session-limits.js';
 
 export const runtime = 'nodejs';
+const MAX_REQUEST_BODY_BYTES = 2.25 * 1024 * 1024;
 
 function json(data, status = 200) {
   return Response.json(data, {
@@ -9,16 +12,63 @@ function json(data, status = 200) {
   });
 }
 
+function matchesRequestOrigin(request, origin) {
+  let originUrl;
+  try {
+    originUrl = new URL(origin);
+  } catch {
+    return false;
+  }
+
+  const requestUrl = new URL(request.url);
+  const host = request.headers.get('host') || requestUrl.host;
+  return originUrl.protocol === requestUrl.protocol && originUrl.host.toLowerCase() === host.toLowerCase();
+}
+
+class RequestBodyTooLargeError extends Error {}
+
+async function readJsonBody(request) {
+  const contentLength = Number(request.headers.get('content-length'));
+  if (Number.isFinite(contentLength) && contentLength > MAX_REQUEST_BODY_BYTES) {
+    throw new RequestBodyTooLargeError();
+  }
+
+  if (!request.body) throw new SyntaxError('Corpo JSON inválido.');
+  const reader = request.body.getReader();
+  const chunks = [];
+  let byteLength = 0;
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      byteLength += value.byteLength;
+      if (byteLength > MAX_REQUEST_BODY_BYTES) {
+        await reader.cancel().catch(() => {});
+        throw new RequestBodyTooLargeError();
+      }
+      chunks.push(Buffer.from(value));
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  return JSON.parse(new TextDecoder().decode(Buffer.concat(chunks, byteLength)));
+}
+
 export async function POST(request) {
   const origin = request.headers.get('origin');
-  if (origin && origin !== new URL(request.url).origin) {
+  if (origin && !matchesRequestOrigin(request, origin)) {
     return json({ error: 'Origem da requisição não permitida.' }, 403);
   }
 
   let input;
   try {
-    input = await request.json();
-  } catch {
+    input = await readJsonBody(request);
+  } catch (error) {
+    if (error instanceof RequestBodyTooLargeError) {
+      return json({ error: 'O corpo da requisição excede o limite de 2,25 MiB.' }, 413);
+    }
     return json({ error: 'Corpo JSON inválido.' }, 400);
   }
 
@@ -29,9 +79,24 @@ export async function POST(request) {
     return json({ error: 'A requisição contém campos não permitidos.' }, 400);
   }
 
+  const deviceId = request.headers.get('x-device-id') || '';
+
   try {
-    const session = await createSession({ plan: input.plan, state: input.state });
-    return json(session, 201);
+    const rateLimit = await consumeSessionCreationLimit(request);
+    if (!rateLimit.allowed) {
+      return Response.json(
+        { error: 'Limite de cinco criações de sala por IP a cada 10 minutos atingido. Tente novamente mais tarde.' },
+        {
+          status: 429,
+          headers: {
+            'Cache-Control': 'no-store',
+            'Retry-After': String(rateLimit.retryAfterSeconds)
+          }
+        }
+      );
+    }
+    const session = await createSession({ plan: input.plan, state: input.state, deviceId });
+    return json({ ...session, shareOrigin: getShareOrigin(request) }, 201);
   } catch (error) {
     if (error instanceof TypeError || error instanceof RangeError) {
       return json({ error: error.message }, 400);
